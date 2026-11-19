@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LogiMarket360.Application\LogiMarket360.Application.csproj" />
+    <ProjectReference Include="..\LogiMarket360.Domain\LogiMarket360.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

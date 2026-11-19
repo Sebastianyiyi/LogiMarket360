@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LogiMarket360.Application\LogiMarket360.Application.csproj" />
+    <ProjectReference Include="..\LogiMarket360.Domain\LogiMarket360.Domain.csproj" />
+    <ProjectReference Include="..\LogiMarket360.Infrastructure\LogiMarket360.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
