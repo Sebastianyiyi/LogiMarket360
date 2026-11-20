@@ -25,12 +25,16 @@ internal sealed class TestApplication : IAsyncDisposable
     public string DatabasePath { get; }
     public IServiceProvider Services => _scope.ServiceProvider;
 
-    public static async Task<TestApplication> CreateAsync(string? databasePath = null, bool ownsDatabase = true)
+    public static async Task<TestApplication> CreateAsync(
+        string? databasePath = null,
+        bool ownsDatabase = true,
+        Action<IServiceCollection>? configure = null)
     {
         databasePath ??= Path.Combine(Path.GetTempPath(), $"lm360-{Guid.NewGuid():N}.db");
         var services = new ServiceCollection();
         services.AddInfrastructure($"Data Source={databasePath}");
         services.AddScoped<IPasarelaPago, PasarelaDeterminista>();
+        configure?.Invoke(services);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
         var scope = provider.CreateAsyncScope();
         await DatabaseSeeder.InicializarAsync(scope.ServiceProvider.GetRequiredService<LogiMarketDbContext>());
