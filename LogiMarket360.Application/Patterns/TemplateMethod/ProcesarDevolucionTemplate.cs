@@ -96,9 +96,12 @@ public abstract class ProcesarDevolucionTemplate
         }
 
         var despacho = await _despachoRepository.ObtenerPorPedidoIdAsync(pedido.Id, ct);
-        int diasDesdeEntrega = despacho?.FechaEntregaReal is DateTime fechaEntrega
+        int diasCalculados = despacho?.FechaEntregaReal is DateTime fechaEntrega
             ? Math.Max(0, (DateTime.UtcNow - fechaEntrega).Days)
-            : solicitud.DiasDesdeEntrega;
+            : 0;
+        // El valor de la solicitud permite reproducir escenarios controlados y nunca
+        // puede reducir el tiempo real ya transcurrido desde la entrega.
+        int diasDesdeEntrega = Math.Max(diasCalculados, solicitud.DiasDesdeEntrega);
 
         var solicitudEvaluada = solicitud with { DiasDesdeEntrega = diasDesdeEntrega };
         var (cumpleCondicion, motivoRechazo) = InspeccionarCondicion(solicitudEvaluada);
