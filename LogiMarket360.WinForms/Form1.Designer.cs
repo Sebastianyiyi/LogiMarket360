@@ -30,8 +30,10 @@
         {
             components = new System.ComponentModel.Container();
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(800, 450);
-            Text = "Form1";
+            ClientSize = new Size(1180, 720);
+            MinimumSize = new Size(960, 620);
+            StartPosition = FormStartPosition.CenterScreen;
+            Text = "LogiMarket 360";
         }
 
         #endregion
