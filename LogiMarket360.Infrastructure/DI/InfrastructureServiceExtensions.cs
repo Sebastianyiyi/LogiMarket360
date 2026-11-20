@@ -4,7 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using LogiMarket360.Application.Facade;
 using LogiMarket360.Application.Patterns.Decorator;
+using LogiMarket360.Application.Patterns.Command;
 using LogiMarket360.Application.Patterns.Flyweight;
+using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Patterns.Observer;
 using LogiMarket360.Application.Patterns.Observer.Eventos;
 using LogiMarket360.Application.Patterns.Observer.Subscriptores;
@@ -100,6 +102,9 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<PedidoBorradorServicio>();
         services.AddScoped<ComprobanteServicio>();
         services.AddScoped<ReporteServicio>();
+        services.AddScoped<ICommandInvoker, CommandInvoker>();
+        services.AddScoped<ICommandFactory, CommandFactory>();
+        services.AddSingleton<IFormularioPrincipalMediator, FormularioPrincipalMediator>();
 
         // Template Method de devoluciones
         services.AddScoped<DevolucionDefectoService>();

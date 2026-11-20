@@ -1,4 +1,6 @@
 using LogiMarket360.Application.Facade;
+using LogiMarket360.Application.Patterns.Command;
+using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Entities;
 using LogiMarket360.Infrastructure.Data;
@@ -81,5 +83,8 @@ public sealed class InfrastructureBaselineTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<AutenticacionServicio>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<CatalogoServicio>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<OutboxProcessor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandFactory>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandInvoker>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IFormularioPrincipalMediator>());
     }
 }

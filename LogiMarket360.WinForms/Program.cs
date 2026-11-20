@@ -1,17 +1,48 @@
-namespace LogiMarket360.WinForms
+namespace LogiMarket360.WinForms;
+
+using LogiMarket360.Infrastructure.Data;
+using LogiMarket360.Infrastructure.DI;
+using Microsoft.Extensions.DependencyInjection;
+
+internal static class Program
 {
-    internal static class Program
+    [STAThread]
+    private static async Task Main()
     {
-        /// <summary>
-        ///  The main entry point for the application.
-        /// </summary>
-        [STAThread]
-        static void Main()
+        ApplicationConfiguration.Initialize();
+
+        try
         {
-            // To customize application configuration such as set high DPI settings or default font,
-            // see https://aka.ms/applicationconfiguration.
-            ApplicationConfiguration.Initialize();
-            global::System.Windows.Forms.Application.Run(new Form1());
+            string dataDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "LogiMarket360");
+            Directory.CreateDirectory(dataDirectory);
+            string databasePath = Path.Combine(dataDirectory, "logimarket360.db");
+
+            var services = new ServiceCollection();
+            services.AddInfrastructure($"Data Source={databasePath}");
+            services.AddScoped<Form1>();
+
+            using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+            {
+                ValidateOnBuild = true,
+                ValidateScopes = true
+            });
+
+            await using var scope = provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<LogiMarketDbContext>();
+            await DatabaseSeeder.InicializarAsync(db);
+
+            var mainForm = scope.ServiceProvider.GetRequiredService<Form1>();
+            global::System.Windows.Forms.Application.Run(mainForm);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"No fue posible iniciar LogiMarket 360.\n\n{ex.Message}",
+                "Error de inicio",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
         }
     }
 }
