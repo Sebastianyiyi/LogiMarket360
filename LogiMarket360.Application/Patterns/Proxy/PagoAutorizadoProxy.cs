@@ -7,11 +7,11 @@ using LogiMarket360.Domain.Enums;
 public class PagoAutorizadoProxy : IPasarelaPago
 {
     private readonly IPasarelaPago _pasarelaDestino;
-    private readonly Func<RolUsuario> _obtenerRolActual;
+    private readonly Func<RolUsuario?> _obtenerRolActual;
 
     public string NombreProveedor => _pasarelaDestino.NombreProveedor;
 
-    public PagoAutorizadoProxy(IPasarelaPago pasarelaDestino, Func<RolUsuario> obtenerRolActual)
+    public PagoAutorizadoProxy(IPasarelaPago pasarelaDestino, Func<RolUsuario?> obtenerRolActual)
     {
         _pasarelaDestino = pasarelaDestino ?? throw new ArgumentNullException(nameof(pasarelaDestino));
         _obtenerRolActual = obtenerRolActual ?? throw new ArgumentNullException(nameof(obtenerRolActual));
@@ -22,10 +22,10 @@ public class PagoAutorizadoProxy : IPasarelaPago
         var rol = _obtenerRolActual();
 
         // Control de autorización estricto: solo ADMIN y VENTAS tienen permiso para ejecutar cobros
-        if (rol != RolUsuario.ADMIN && rol != RolUsuario.VENTAS)
+        if (rol is null || (rol != RolUsuario.ADMIN && rol != RolUsuario.VENTAS))
         {
             throw new UnauthorizedAccessException(
-                $"Acceso denegado: El rol '{rol}' no tiene autorización para procesar operaciones de cobro.");
+                $"Acceso denegado: El rol '{rol?.ToString() ?? "SIN_SESION"}' no tiene autorización para procesar operaciones de cobro.");
         }
 
         // Si está autorizado, delega en la siguiente capa (Decorator/Pasarela)

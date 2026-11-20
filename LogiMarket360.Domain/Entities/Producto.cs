@@ -10,7 +10,7 @@ public class Producto
     public decimal Precio { get; private set; }
     public int Stock { get; private set; }
     public decimal PesoKg { get; private set; }
-    public byte[]? ConcurrencyToken { get; set; }
+    public int Version { get; private set; }
 
     protected Producto() { }
 
@@ -42,6 +42,7 @@ public class Producto
             throw new StockInsuficienteException(Sku, Stock, cantidad);
 
         Stock -= cantidad;
+        Version++;
     }
 
     public void ReintegrarStock(int cantidad)
@@ -50,6 +51,7 @@ public class Producto
             throw new ArgumentOutOfRangeException(nameof(cantidad), "La cantidad a reintegrar debe ser mayor a cero.");
 
         Stock += cantidad;
+        Version++;
     }
 
     public void ActualizarPrecio(decimal nuevoPrecio)
@@ -58,6 +60,7 @@ public class Producto
             throw new ArgumentOutOfRangeException(nameof(nuevoPrecio), "El precio debe ser un valor monetario positivo.");
 
         Precio = decimal.Round(nuevoPrecio, 2, MidpointRounding.AwayFromZero);
+        Version++;
     }
 
     public void ActualizarDatos(string nombre, decimal pesoKg)
@@ -69,5 +72,15 @@ public class Producto
 
         Nombre = nombre.Trim();
         PesoKg = decimal.Round(pesoKg, 2, MidpointRounding.AwayFromZero);
+        Version++;
+    }
+
+    public void AjustarStock(int nuevoStock)
+    {
+        if (nuevoStock < 0)
+            throw new ArgumentOutOfRangeException(nameof(nuevoStock), "El stock no puede ser negativo.");
+
+        Stock = nuevoStock;
+        Version++;
     }
 }

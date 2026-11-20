@@ -2,9 +2,8 @@ namespace LogiMarket360.Application.Facade;
 
 using System.Text.Json;
 using LogiMarket360.Application.DTOs;
+using LogiMarket360.Application.Exceptions;
 using LogiMarket360.Application.Patterns.ChainOfResponsibility;
-using LogiMarket360.Application.Patterns.Observer;
-using LogiMarket360.Application.Patterns.Observer.Eventos;
 using LogiMarket360.Application.Patterns.Singleton;
 using LogiMarket360.Application.Ports;
 using LogiMarket360.Application.Ports.Repositories;
@@ -32,7 +31,7 @@ public class ConfirmacionPedidoFacade
     private readonly IEventoOutboxRepository _outboxRepository;
     private readonly IAuditoriaRepository _auditoriaRepository;
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IEventoPublicador _eventoPublicador;
+    private readonly IOutboxProcesador _outboxProcesador;
     private readonly MetricasSesion _metricas;
 
     // Chain of Responsibility para validación previa
@@ -48,7 +47,7 @@ public class ConfirmacionPedidoFacade
         IEventoOutboxRepository outboxRepository,
         IAuditoriaRepository auditoriaRepository,
         IUnitOfWork unitOfWork,
-        IEventoPublicador eventoPublicador,
+        IOutboxProcesador outboxProcesador,
         MetricasSesion metricas)
     {
         _pedidoRepository = pedidoRepository;
@@ -60,7 +59,7 @@ public class ConfirmacionPedidoFacade
         _outboxRepository = outboxRepository;
         _auditoriaRepository = auditoriaRepository;
         _unitOfWork = unitOfWork;
-        _eventoPublicador = eventoPublicador;
+        _outboxProcesador = outboxProcesador;
         _metricas = metricas;
 
         // Construir la cadena de validación
@@ -79,12 +78,28 @@ public class ConfirmacionPedidoFacade
         CancellationToken ct = default)
     {
         // 1. Idempotencia: si ya existe pago aprobado con la misma clave, retornar resultado original
+        var pagoExistente = await _pagoRepository.ObtenerPorClaveIdempotenciaAsync(idempotencyKey, ct);
+        if (pagoExistente is not null && pagoExistente.Aprobado)
+        {
+            var pedidoPagado = await _pedidoRepository.ObtenerPorIdAsync(pagoExistente.PedidoId, ct);
+            return new ResultadoConfirmacion(
+                Exitoso: true,
+                Mensaje: $"El pedido {pedidoPagado?.NumeroPedido ?? pagoExistente.PedidoId.ToString()} ya fue confirmado con esta clave (idempotente).",
+                ReferenciaPago: pagoExistente.ReferenciaTransaccion,
+                TotalCobrado: pagoExistente.Monto,
+                EsIdempotente: true
+            );
+        }
+
         var pedidoExistente = await _pedidoRepository.ObtenerPorIdempotencyKeyAsync(idempotencyKey, ct);
         if (pedidoExistente != null && pedidoExistente.EstadoCodigo == EstadoPedido.PAGADO)
         {
+            var pagoDelPedido = await _pagoRepository.ObtenerPorPedidoIdAsync(pedidoExistente.Id, ct);
             return new ResultadoConfirmacion(
                 Exitoso: true,
                 Mensaje: $"El pedido {pedidoExistente.NumeroPedido} ya fue confirmado (idempotente).",
+                ReferenciaPago: pagoDelPedido?.ReferenciaTransaccion,
+                TotalCobrado: pagoDelPedido?.Monto ?? pedidoExistente.Total,
                 EsIdempotente: true
             );
         }
@@ -155,6 +170,7 @@ public class ConfirmacionPedidoFacade
             {
                 pedidoId = pedido.Id,
                 numeroPedido = pedido.NumeroPedido,
+                clienteId = pedido.ClienteId,
                 total = pedido.Total,
                 referencia = resultadoPago.ReferenciaTransaccion,
                 fecha = DateTime.UtcNow
@@ -175,15 +191,8 @@ public class ConfirmacionPedidoFacade
             await _unitOfWork.SaveChangesAsync(ct);
             await _unitOfWork.CommitAsync(ct);
 
-            // 7. Post-transacción: publicar evento (Observer)
-            await _eventoPublicador.PublicarAsync(new PedidoPagadoEvent(
-                pedido.Id,
-                pedido.NumeroPedido,
-                pedido.ClienteId,
-                pedido.Total,
-                resultadoPago.ReferenciaTransaccion,
-                DateTime.UtcNow
-            ), ct);
+            // 7. Post-transacción: procesar Outbox (Observer + notificaciones)
+            await _outboxProcesador.ProcesarPendientesAsync(50, ct);
 
             return new ResultadoConfirmacion(
                 Exitoso: true,
@@ -191,6 +200,11 @@ public class ConfirmacionPedidoFacade
                 ReferenciaPago: resultadoPago.ReferenciaTransaccion,
                 TotalCobrado: pedido.Total
             );
+        }
+        catch (ConflictoConcurrenciaException ex)
+        {
+            await _unitOfWork.RollbackAsync(ct);
+            return new ResultadoConfirmacion(false, ex.Message);
         }
         catch (Exception ex)
         {

@@ -2,6 +2,7 @@ namespace LogiMarket360.Application.Patterns.Command;
 
 using LogiMarket360.Application.Ports;
 using LogiMarket360.Application.Ports.Repositories;
+using LogiMarket360.Application.Security;
 using LogiMarket360.Domain.Entities;
 
 public class CancelarPedidoCommand : ICommand
@@ -10,6 +11,7 @@ public class CancelarPedidoCommand : ICommand
     private readonly IPedidoRepository _pedidoRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditoriaRepository _auditoriaRepository;
+    private readonly IAutorizador _autorizador;
 
     public string Nombre => "CancelarPedidoCommand";
 
@@ -17,16 +19,27 @@ public class CancelarPedidoCommand : ICommand
         int pedidoId,
         IPedidoRepository pedidoRepository,
         IUnitOfWork unitOfWork,
-        IAuditoriaRepository auditoriaRepository)
+        IAuditoriaRepository auditoriaRepository,
+        IAutorizador autorizador)
     {
         _pedidoId = pedidoId;
         _pedidoRepository = pedidoRepository;
         _unitOfWork = unitOfWork;
         _auditoriaRepository = auditoriaRepository;
+        _autorizador = autorizador;
     }
 
     public async Task<CommandResult> ExecuteAsync(CancellationToken ct = default)
     {
+        try
+        {
+            _autorizador.ExigirRol(Permisos.Ventas);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return CommandResult.Falla(ex.Message);
+        }
+
         var pedido = await _pedidoRepository.ObtenerPorIdAsync(_pedidoId, ct);
         if (pedido == null)
         {

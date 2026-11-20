@@ -84,6 +84,14 @@ public class Pedido
         _detalles.Add(detalle);
     }
 
+    public void LimpiarDetalles()
+    {
+        if (EstadoCodigo != EstadoPedido.BORRADOR)
+            throw new DomainException($"Solo se pueden editar líneas de un pedido en BORRADOR. Estado actual: '{EstadoCodigo}'.");
+
+        _detalles.Clear();
+    }
+
     public void RecalcularTotales(decimal descuentoCalculado, string nombreEstrategia)
     {
         if (EstadoCodigo != EstadoPedido.BORRADOR && EstadoCodigo != EstadoPedido.VALIDADO)

@@ -30,6 +30,17 @@ public class Cliente
         Categoria = nuevaCategoria;
     }
 
+    public void ActualizarDatos(string nombre, string identificacion)
+    {
+        if (string.IsNullOrWhiteSpace(nombre))
+            throw new ArgumentException("El nombre del cliente no puede ser vacío.", nameof(nombre));
+        if (string.IsNullOrWhiteSpace(identificacion))
+            throw new ArgumentException("La identificación no puede ser vacía.", nameof(identificacion));
+
+        Nombre = nombre.Trim();
+        Identificacion = identificacion.Trim();
+    }
+
     public void Desactivar() => Activo = false;
     public void Activar() => Activo = true;
 }

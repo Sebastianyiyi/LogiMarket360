@@ -10,4 +10,5 @@ public interface IProductoRepository
     Task<IReadOnlyList<Producto>> BuscarAsync(string criterio, CancellationToken ct = default);
     Task AgregarAsync(Producto producto, CancellationToken ct = default);
     void Actualizar(Producto producto);
+    void Eliminar(Producto producto);
 }

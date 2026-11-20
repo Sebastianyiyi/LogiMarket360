@@ -45,6 +45,24 @@ public class Devolucion
         ReferenciaReembolso = referenciaReembolso.Trim();
     }
 
+    public void ReiniciarSolicitud(
+        MotivoDevolucion motivo,
+        int diasDesdeEntrega,
+        bool productoSinUso,
+        string detalleMotivo,
+        decimal subtotalMenosDescuento)
+    {
+        Motivo = motivo;
+        DiasDesdeEntrega = diasDesdeEntrega;
+        ProductoSinUso = productoSinUso;
+        DetalleMotivo = detalleMotivo.Trim();
+        FechaSolicitud = DateTime.UtcNow;
+        MontoReembolso = decimal.Round(subtotalMenosDescuento, 2, MidpointRounding.AwayFromZero);
+        Aprobada = false;
+        ReintegroStockRealizado = false;
+        ReferenciaReembolso = string.Empty;
+    }
+
     public void Rechazar(string motivoRechazo)
     {
         Aprobada = false;

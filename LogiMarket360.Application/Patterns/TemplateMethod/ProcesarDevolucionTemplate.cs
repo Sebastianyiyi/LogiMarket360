@@ -1,10 +1,10 @@
 namespace LogiMarket360.Application.Patterns.TemplateMethod;
 
-using LogiMarket360.Application.DTOs;
-using LogiMarket360.Application.Patterns.Observer;
-using LogiMarket360.Application.Patterns.Observer.Eventos;
+using System.Text.Json;
+using LogiMarket360.Application.Exceptions;
 using LogiMarket360.Application.Ports;
 using LogiMarket360.Application.Ports.Repositories;
+using LogiMarket360.Application.Security;
 using LogiMarket360.Domain.Entities;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.Domain.Exceptions;
@@ -28,33 +28,52 @@ public abstract class ProcesarDevolucionTemplate
 {
     protected readonly IPedidoRepository _pedidoRepository;
     protected readonly IDevolucionRepository _devolucionRepository;
+    protected readonly IDespachoRepository _despachoRepository;
     protected readonly IProductoRepository _productoRepository;
     protected readonly IMovimientoInventarioRepository _movimientoRepository;
+    protected readonly IAuditoriaRepository _auditoriaRepository;
+    protected readonly IEventoOutboxRepository _outboxRepository;
+    protected readonly IOutboxProcesador _outboxProcesador;
     protected readonly IUnitOfWork _unitOfWork;
-    protected readonly IEventoPublicador _eventoPublicador;
+    protected readonly IAutorizador _autorizador;
 
-    public ProcesarDevolucionTemplate(
+    protected ProcesarDevolucionTemplate(
         IPedidoRepository pedidoRepository,
         IDevolucionRepository devolucionRepository,
+        IDespachoRepository despachoRepository,
         IProductoRepository productoRepository,
         IMovimientoInventarioRepository movimientoRepository,
+        IAuditoriaRepository auditoriaRepository,
+        IEventoOutboxRepository outboxRepository,
+        IOutboxProcesador outboxProcesador,
         IUnitOfWork unitOfWork,
-        IEventoPublicador eventoPublicador)
+        IAutorizador autorizador)
     {
         _pedidoRepository = pedidoRepository;
         _devolucionRepository = devolucionRepository;
+        _despachoRepository = despachoRepository;
         _productoRepository = productoRepository;
         _movimientoRepository = movimientoRepository;
+        _auditoriaRepository = auditoriaRepository;
+        _outboxRepository = outboxRepository;
+        _outboxProcesador = outboxProcesador;
         _unitOfWork = unitOfWork;
-        _eventoPublicador = eventoPublicador;
+        _autorizador = autorizador;
     }
 
-    // El método plantilla que orquesta los pasos invariantes
     public async Task<ResultadoDevolucion> ProcesarAsync(SolicitudDevolucion solicitud, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(solicitud);
 
-        // Paso 1: Verificar elegibilidad básica del pedido
+        try
+        {
+            _autorizador.ExigirRol(Permisos.Devolucion);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new ResultadoDevolucion(false, 0m, ex.Message, string.Empty);
+        }
+
         var pedido = await _pedidoRepository.ObtenerPorIdAsync(solicitud.PedidoId, ct);
         if (pedido == null)
         {
@@ -63,88 +82,152 @@ public abstract class ProcesarDevolucionTemplate
 
         if (pedido.EstadoCodigo != EstadoPedido.ENTREGADO)
         {
-            return new ResultadoDevolucion(false, 0m, 
-                $"Solo se pueden procesar devoluciones sobre pedidos en estado 'ENTREGADO'. Estado actual: '{pedido.EstadoCodigo}'.", string.Empty);
+            return new ResultadoDevolucion(false, 0m,
+                $"Solo se pueden procesar devoluciones sobre pedidos en estado 'ENTREGADO'. Estado actual: '{pedido.EstadoCodigo}'.",
+                string.Empty);
         }
 
-        // Verificar que no exista devolución previa aprobada para este pedido (unicidad de devolución)
         var devolucionExistente = await _devolucionRepository.ObtenerPorPedidoIdAsync(pedido.Id, ct);
-        if (devolucionExistente != null && devolucionExistente.Aprobada)
+        if (devolucionExistente is not null && devolucionExistente.Aprobada)
         {
-            return new ResultadoDevolucion(false, 0m, 
-                $"El pedido '{pedido.NumeroPedido}' ya cuenta con una devolución procesada previamente.", string.Empty);
+            return new ResultadoDevolucion(false, 0m,
+                $"El pedido '{pedido.NumeroPedido}' ya cuenta con una devolución aprobada previamente.",
+                devolucionExistente.ReferenciaReembolso);
         }
 
-        // Paso 2: Inspeccionar condición específica según el motivo (paso abstracto/personalizado)
-        var (cumpleCondicion, motivoRechazo) = InspeccionarCondicion(solicitud);
+        var despacho = await _despachoRepository.ObtenerPorPedidoIdAsync(pedido.Id, ct);
+        int diasDesdeEntrega = despacho?.FechaEntregaReal is DateTime fechaEntrega
+            ? Math.Max(0, (DateTime.UtcNow - fechaEntrega).Days)
+            : solicitud.DiasDesdeEntrega;
+
+        var solicitudEvaluada = solicitud with { DiasDesdeEntrega = diasDesdeEntrega };
+        var (cumpleCondicion, motivoRechazo) = InspeccionarCondicion(solicitudEvaluada);
+
         if (!cumpleCondicion)
         {
-            // Registrar devolución rechazada sin alterar stock ni generar reembolso
-            var devRechazada = new Devolucion(
-                pedido.Id,
-                solicitud.Motivo,
-                solicitud.DiasDesdeEntrega,
-                solicitud.ProductoSinUso,
-                solicitud.Detalle,
-                0m
-            );
-            devRechazada.Rechazar(motivoRechazo);
-            await _devolucionRepository.AgregarAsync(devRechazada, ct);
-            await _unitOfWork.SaveChangesAsync(ct);
-
-            return new ResultadoDevolucion(false, 0m, $"Devolución rechazada: {motivoRechazo}", string.Empty);
+            return await RegistrarRechazoAsync(pedido, devolucionExistente, solicitudEvaluada, motivoRechazo, ct);
         }
 
-        // Paso 3: Calcular reembolso (importe de los productos tras descuento, sin tarifa de envío)
         decimal montoReembolso = CalcularReembolso(pedido);
+        string referenciaReembolso = $"REF-REB-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
 
-        // Paso 4: Registrar devolución y reintegrar existencias dentro de una transacción atómica
         await _unitOfWork.BeginTransactionAsync(ct);
         try
         {
-            string referenciaReembolso = $"REF-REB-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+            Devolucion devolucion;
+            if (devolucionExistente is not null)
+            {
+                devolucionExistente.ReiniciarSolicitud(
+                    solicitudEvaluada.Motivo,
+                    solicitudEvaluada.DiasDesdeEntrega,
+                    solicitudEvaluada.ProductoSinUso,
+                    solicitudEvaluada.Detalle,
+                    montoReembolso);
+                devolucionExistente.Aprobar(referenciaReembolso);
+                _devolucionRepository.Actualizar(devolucionExistente);
+                devolucion = devolucionExistente;
+            }
+            else
+            {
+                devolucion = new Devolucion(
+                    pedido.Id,
+                    solicitudEvaluada.Motivo,
+                    solicitudEvaluada.DiasDesdeEntrega,
+                    solicitudEvaluada.ProductoSinUso,
+                    solicitudEvaluada.Detalle,
+                    montoReembolso);
+                devolucion.Aprobar(referenciaReembolso);
+                await _devolucionRepository.AgregarAsync(devolucion, ct);
+            }
 
-            var devolucionAprobada = new Devolucion(
-                pedido.Id,
-                solicitud.Motivo,
-                solicitud.DiasDesdeEntrega,
-                solicitud.ProductoSinUso,
-                solicitud.Detalle,
-                montoReembolso
-            );
-            devolucionAprobada.Aprobar(referenciaReembolso);
-            await _devolucionRepository.AgregarAsync(devolucionAprobada, ct);
-
-            // Reintegrar stock por cada SKU físico final
             await ReintegrarStockAsync(pedido, ct);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                pedidoId = pedido.Id,
+                monto = montoReembolso,
+                motivo = solicitudEvaluada.Motivo.ToString(),
+                fecha = DateTime.UtcNow
+            });
+            await _outboxRepository.AgregarAsync(new EventoOutbox("DevolucionAceptada", payload), ct);
+
+            await _auditoriaRepository.AgregarAsync(new Auditoria(
+                usuario: "SISTEMA",
+                operacion: "DEVOLUCION_APROBADA",
+                entidad: "Devolucion",
+                entidadId: pedido.Id.ToString(),
+                detalles: $"Motivo: {solicitudEvaluada.Motivo} | Reembolso: USD {montoReembolso:F2} | Ref: {referenciaReembolso}",
+                exitoso: true), ct);
 
             await _unitOfWork.SaveChangesAsync(ct);
             await _unitOfWork.CommitAsync(ct);
-
-            // Paso 5: Generar evento post-transaccional
-            await GenerarEventoAsync(pedido, devolucionAprobada, ct);
-
-            return new ResultadoDevolucion(true, montoReembolso, 
-                $"Devolución aprobada exitosamente por USD {montoReembolso:F2}.", referenciaReembolso);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is ConflictoConcurrenciaException or DomainException or InvalidOperationException)
         {
             await _unitOfWork.RollbackAsync(ct);
             return new ResultadoDevolucion(false, 0m, $"Error al registrar devolución: {ex.Message}", string.Empty);
         }
+
+        await _outboxProcesador.ProcesarPendientesAsync(50, ct);
+
+        return new ResultadoDevolucion(
+            true,
+            montoReembolso,
+            $"Devolución aprobada exitosamente por USD {montoReembolso:F2}.",
+            referenciaReembolso);
     }
 
-    // Paso 2 abstracto: cada subclase evalúa sus reglas específicas
+    private async Task<ResultadoDevolucion> RegistrarRechazoAsync(
+        Pedido pedido,
+        Devolucion? devolucionExistente,
+        SolicitudDevolucion solicitud,
+        string motivoRechazo,
+        CancellationToken ct)
+    {
+        if (devolucionExistente is not null)
+        {
+            devolucionExistente.ReiniciarSolicitud(
+                solicitud.Motivo,
+                solicitud.DiasDesdeEntrega,
+                solicitud.ProductoSinUso,
+                solicitud.Detalle,
+                0m);
+            devolucionExistente.Rechazar(motivoRechazo);
+            _devolucionRepository.Actualizar(devolucionExistente);
+        }
+        else
+        {
+            var devolucionRechazada = new Devolucion(
+                pedido.Id,
+                solicitud.Motivo,
+                solicitud.DiasDesdeEntrega,
+                solicitud.ProductoSinUso,
+                solicitud.Detalle,
+                0m);
+            devolucionRechazada.Rechazar(motivoRechazo);
+            await _devolucionRepository.AgregarAsync(devolucionRechazada, ct);
+        }
+
+        await _auditoriaRepository.AgregarAsync(new Auditoria(
+            usuario: "SISTEMA",
+            operacion: "DEVOLUCION_RECHAZADA",
+            entidad: "Devolucion",
+            entidadId: pedido.Id.ToString(),
+            detalles: motivoRechazo,
+            exitoso: false), ct);
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        return new ResultadoDevolucion(false, 0m, $"Devolución rechazada: {motivoRechazo}", string.Empty);
+    }
+
     protected abstract (bool Cumple, string Mensaje) InspeccionarCondicion(SolicitudDevolucion solicitud);
 
-    // Paso 3: Regla invariante de cálculo de reembolso (Subtotal - Descuento, SIN flete)
     protected virtual decimal CalcularReembolso(Pedido pedido)
     {
         decimal reembolso = pedido.Subtotal - pedido.Descuento;
         return decimal.Round(reembolso, 2, MidpointRounding.AwayFromZero);
     }
 
-    // Paso 4: Reintegrar existencias
     protected virtual async Task ReintegrarStockAsync(Pedido pedido, CancellationToken ct)
     {
         foreach (var detalle in pedido.Detalles)
@@ -153,52 +236,37 @@ public abstract class ProcesarDevolucionTemplate
             {
                 foreach (var comp in detalle.ComponentesSnapshot)
                 {
-                    var prod = await _productoRepository.ObtenerPorSkuAsync(comp.Sku, ct)
+                    var producto = await _productoRepository.ObtenerPorSkuAsync(comp.Sku, ct)
                         ?? throw new DomainException($"Producto '{comp.Sku}' no encontrado al reintegrar stock.");
 
-                    prod.ReintegrarStock(comp.CantidadFisica);
-                    _productoRepository.Actualizar(prod);
+                    producto.ReintegrarStock(comp.CantidadFisica);
+                    _productoRepository.Actualizar(producto);
 
-                    var mov = new MovimientoInventario(
-                        prod.Id,
-                        prod.Sku,
+                    await _movimientoRepository.AgregarAsync(new MovimientoInventario(
+                        producto.Id,
+                        producto.Sku,
                         comp.CantidadFisica,
                         TipoMovimientoInventario.DEVOLUCION,
                         $"Reintegro por devolución total de pedido {pedido.NumeroPedido}",
-                        pedido.NumeroPedido
-                    );
-                    await _movimientoRepository.AgregarAsync(mov, ct);
+                        pedido.NumeroPedido), ct);
                 }
             }
             else
             {
-                var prod = await _productoRepository.ObtenerPorSkuAsync(detalle.CodigoItem, ct)
+                var producto = await _productoRepository.ObtenerPorSkuAsync(detalle.CodigoItem, ct)
                     ?? throw new DomainException($"Producto '{detalle.CodigoItem}' no encontrado al reintegrar stock.");
 
-                prod.ReintegrarStock(detalle.Cantidad);
-                _productoRepository.Actualizar(prod);
+                producto.ReintegrarStock(detalle.Cantidad);
+                _productoRepository.Actualizar(producto);
 
-                var mov = new MovimientoInventario(
-                    prod.Id,
-                    prod.Sku,
+                await _movimientoRepository.AgregarAsync(new MovimientoInventario(
+                    producto.Id,
+                    producto.Sku,
                     detalle.Cantidad,
                     TipoMovimientoInventario.DEVOLUCION,
                     $"Reintegro por devolución total de pedido {pedido.NumeroPedido}",
-                    pedido.NumeroPedido
-                );
-                await _movimientoRepository.AgregarAsync(mov, ct);
+                    pedido.NumeroPedido), ct);
             }
         }
-    }
-
-    // Paso 5: Notificación y publicación de evento
-    protected virtual async Task GenerarEventoAsync(Pedido pedido, Devolucion devolucion, CancellationToken ct)
-    {
-        await _eventoPublicador.PublicarAsync(new DevolucionAceptadaEvent(
-            pedido.Id,
-            devolucion.MontoReembolso,
-            devolucion.Motivo.ToString(),
-            DateTime.UtcNow
-        ), ct);
     }
 }
