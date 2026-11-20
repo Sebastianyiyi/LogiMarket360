@@ -15,6 +15,18 @@ namespace LogiMarket360.Tests;
 
 public sealed class IntegrityRecoveryTests
 {
+    [Fact(DisplayName = "P20 - Facade revierte ante cobro rechazado")]
+    public async Task P20_CobroRechazado_NoPersisteStockPagoNiOutbox()
+    {
+        await using var app = await TestApplication.CreateAsync(configure: s => s.AddScoped<IPasarelaPago, LogiMarket360.Infrastructure.Adapters.PasarelaFallaSimulada>());
+        await app.LoginAsync("ventas", "ventas123");
+        var pedido = await CrearAsync(app, 1, new LineaPedidoSolicitud("P01", 1, false));
+        Assert.False((await app.Get<ConfirmacionPedidoFacade>().ConfirmarAsync(pedido.Id, pedido.IdempotencyKey)).Exitoso);
+        var db = app.Get<LogiMarketDbContext>();
+        Assert.Equal(8, (await db.Productos.SingleAsync(p => p.Sku == "P01")).Stock);
+        Assert.Empty(db.Pagos); Assert.Empty(db.EventosOutbox);
+    }
+
     [Fact(DisplayName = "P07b - idempotencia concurrente")]
     public async Task IdempotenciaConcurrente_UnPagoYUnMovimiento()
     {
@@ -54,6 +66,26 @@ public sealed class IntegrityRecoveryTests
         Assert.Equal(54m, (await db.Devoluciones.SingleAsync()).MontoReembolso);
         Assert.Equal(8, (await db.Productos.SingleAsync(p => p.Sku == "P01")).Stock);
         Assert.Single(db.Devoluciones);
+    }
+
+    [Fact(DisplayName = "P33 - Template Method aplica plazos")]
+    public async Task P33_ArrepentimientoDia10_RechazaSinReintegro()
+    {
+        await using var app = await TestApplication.CreateAsync(); await app.LoginAsync("ventas", "ventas123");
+        var pedido = await CrearAsync(app, 1, new LineaPedidoSolicitud("P01", 1, false));
+        await app.Get<ConfirmacionPedidoFacade>().ConfirmarAsync(pedido.Id, pedido.IdempotencyKey);
+        app.Get<AutenticacionServicio>().CerrarSesion(); await app.LoginAsync("bodega", "bodega123");
+        var invoker = app.Get<ICommandInvoker>(); var factory = app.Get<ICommandFactory>();
+        await invoker.InvocarAsync(factory.CrearDespachar(pedido.Id, "GUIA-33", "TEST"));
+        await invoker.InvocarAsync(factory.CrearEntregar(pedido.Id));
+        app.Get<AutenticacionServicio>().CerrarSesion(); await app.LoginAsync("ventas", "ventas123");
+        var r = await invoker.InvocarAsync(factory.CrearDevolucion(new SolicitudDevolucion(
+            pedido.Id, MotivoDevolucion.ARREPENTIMIENTO, 10, true, "Fuera de plazo")));
+        Assert.False(r.Exitoso);
+        Assert.Equal(7, (await app.Get<LogiMarketDbContext>().Productos.SingleAsync(p => p.Sku == "P01")).Stock);
+        var devolucion = await app.Get<LogiMarketDbContext>().Devoluciones.SingleAsync();
+        Assert.False(devolucion.Aprobada);
+        Assert.Equal(0m, devolucion.MontoReembolso);
     }
 
     [Fact(DisplayName = "P36 - concurrencia impide sobreventa")]
