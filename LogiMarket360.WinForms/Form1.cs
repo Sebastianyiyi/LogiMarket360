@@ -10,18 +10,27 @@ public partial class Form1 : Form
     private readonly CatalogoControl _catalogo;
     private readonly ClientesControl _clientes;
     private readonly PedidosControl _pedidos;
+    private readonly LogisticaControl _logistica;
+    private readonly DevolucionesControl _devoluciones;
+    private readonly ConsultasControl _consultas;
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
 
     public Form1(
         AutenticacionServicio autenticacion,
         CatalogoControl catalogo,
         ClientesControl clientes,
-        PedidosControl pedidos)
+        PedidosControl pedidos,
+        LogisticaControl logistica,
+        DevolucionesControl devoluciones,
+        ConsultasControl consultas)
     {
         _autenticacion = autenticacion;
         _catalogo = catalogo;
         _clientes = clientes;
         _pedidos = pedidos;
+        _logistica = logistica;
+        _devoluciones = devoluciones;
+        _consultas = consultas;
         InitializeComponent();
         Controls.Add(_content);
         MostrarAcceso();
@@ -156,11 +165,11 @@ public partial class Form1 : Form
         {
             tabs.TabPages.Add(CrearPagina("Clientes", _clientes));
             tabs.TabPages.Add(CrearPagina("Pedidos", _pedidos));
-            tabs.TabPages.Add(CrearPagina("Devoluciones", "Políticas, reintegros y reembolsos"));
+            tabs.TabPages.Add(CrearPagina("Devoluciones", _devoluciones));
         }
         if (rol is RolUsuario.ADMIN or RolUsuario.BODEGA)
-            tabs.TabPages.Add(CrearPagina("Logística", "Despacho, guía, seguimiento y entrega"));
-        tabs.TabPages.Add(CrearPagina("Consultas", "Pedidos, inventario, auditoría y métricas"));
+            tabs.TabPages.Add(CrearPagina("Logística", _logistica));
+        tabs.TabPages.Add(CrearPagina("Consultas", _consultas));
 
         _content.Controls.Add(tabs);
         _content.Controls.Add(session);

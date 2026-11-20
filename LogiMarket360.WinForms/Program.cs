@@ -26,6 +26,9 @@ internal static class Program
             services.AddScoped<CatalogoControl>();
             services.AddScoped<ClientesControl>();
             services.AddScoped<PedidosControl>();
+            services.AddScoped<LogisticaControl>();
+            services.AddScoped<DevolucionesControl>();
+            services.AddScoped<ConsultasControl>();
 
             using var provider = services.BuildServiceProvider(new ServiceProviderOptions
             {
