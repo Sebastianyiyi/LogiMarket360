@@ -9,13 +9,19 @@ public partial class Form1 : Form
     private readonly AutenticacionServicio _autenticacion;
     private readonly CatalogoControl _catalogo;
     private readonly ClientesControl _clientes;
+    private readonly PedidosControl _pedidos;
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
 
-    public Form1(AutenticacionServicio autenticacion, CatalogoControl catalogo, ClientesControl clientes)
+    public Form1(
+        AutenticacionServicio autenticacion,
+        CatalogoControl catalogo,
+        ClientesControl clientes,
+        PedidosControl pedidos)
     {
         _autenticacion = autenticacion;
         _catalogo = catalogo;
         _clientes = clientes;
+        _pedidos = pedidos;
         InitializeComponent();
         Controls.Add(_content);
         MostrarAcceso();
@@ -149,7 +155,7 @@ public partial class Form1 : Form
         if (rol is RolUsuario.ADMIN or RolUsuario.VENTAS)
         {
             tabs.TabPages.Add(CrearPagina("Clientes", _clientes));
-            tabs.TabPages.Add(CrearPagina("Pedidos", "Borradores, valoración y confirmación"));
+            tabs.TabPages.Add(CrearPagina("Pedidos", _pedidos));
             tabs.TabPages.Add(CrearPagina("Devoluciones", "Políticas, reintegros y reembolsos"));
         }
         if (rol is RolUsuario.ADMIN or RolUsuario.BODEGA)

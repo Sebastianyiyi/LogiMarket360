@@ -25,6 +25,7 @@ internal static class Program
             services.AddScoped<Form1>();
             services.AddScoped<CatalogoControl>();
             services.AddScoped<ClientesControl>();
+            services.AddScoped<PedidosControl>();
 
             using var provider = services.BuildServiceProvider(new ServiceProviderOptions
             {
