@@ -22,7 +22,7 @@ internal static class Program
 
             var services = new ServiceCollection();
             services.AddInfrastructure($"Data Source={databasePath}");
-            services.AddScoped<Form1>();
+            services.AddScoped<LogiMarketView>();
             services.AddScoped<CatalogoControl>();
             services.AddScoped<ClientesControl>();
             services.AddScoped<PedidosControl>();
@@ -40,7 +40,7 @@ internal static class Program
             var db = scope.ServiceProvider.GetRequiredService<LogiMarketDbContext>();
             await DatabaseSeeder.InicializarAsync(db);
 
-            var mainForm = scope.ServiceProvider.GetRequiredService<Form1>();
+            var mainForm = scope.ServiceProvider.GetRequiredService<LogiMarketView>();
             global::System.Windows.Forms.Application.Run(mainForm);
         }
         catch (Exception ex)

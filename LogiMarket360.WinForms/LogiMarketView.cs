@@ -4,7 +4,7 @@ using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.WinForms.Views;
 
-public partial class Form1 : Form
+public partial class LogiMarketView : Form
 {
     private readonly AutenticacionServicio _autenticacion;
     private readonly CatalogoControl _catalogo;
@@ -15,7 +15,7 @@ public partial class Form1 : Form
     private readonly ConsultasControl _consultas;
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
 
-    public Form1(
+    public LogiMarketView(
         AutenticacionServicio autenticacion,
         CatalogoControl catalogo,
         ClientesControl clientes,

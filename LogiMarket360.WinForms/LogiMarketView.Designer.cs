@@ -1,6 +1,6 @@
 ﻿namespace LogiMarket360.WinForms
 {
-    partial class Form1
+    partial class LogiMarketView
     {
         /// <summary>
         ///  Required designer variable.
