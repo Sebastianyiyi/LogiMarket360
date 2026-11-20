@@ -2,6 +2,7 @@ namespace LogiMarket360.Infrastructure.Data;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using LogiMarket360.Application.Exceptions;
 using LogiMarket360.Application.Ports;
 
 public class EfUnitOfWork : IUnitOfWork
@@ -13,10 +14,21 @@ public class EfUnitOfWork : IUnitOfWork
     public EfUnitOfWork(LogiMarketDbContext context) => _context = context;
 
     public async Task<int> SaveChangesAsync(CancellationToken ct = default)
-        => await _context.SaveChangesAsync(ct);
+    {
+        try
+        {
+            return await _context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictoConcurrenciaException(
+                "La operación no pudo completarse porque otro usuario modificó el stock o el pedido. Recargue los datos e intente nuevamente.",
+                ex);
+        }
+    }
 
     public async Task BeginTransactionAsync(CancellationToken ct = default)
-        => _transaction = await _context.Database.BeginTransactionAsync(ct);
+        => _transaction = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
 
     public async Task CommitAsync(CancellationToken ct = default)
     {

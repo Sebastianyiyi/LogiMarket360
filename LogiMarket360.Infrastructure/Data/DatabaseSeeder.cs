@@ -13,7 +13,7 @@ public static class DatabaseSeeder
             await context.Database.EnsureDeletedAsync();
         }
 
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.MigrateAsync();
 
         // 1. Usuarios de prueba con hashing PBKDF2/SHA256
         if (!await context.Usuarios.AnyAsync())

@@ -59,7 +59,7 @@ public class LogiMarketDbContext : DbContext
             entity.Property(p => p.Nombre).HasMaxLength(100).IsRequired();
             entity.Property(p => p.Precio).HasColumnType("TEXT");
             entity.Property(p => p.PesoKg).HasColumnType("TEXT");
-            entity.Property(p => p.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(p => p.Version).IsConcurrencyToken();
         });
 
         // Kit y KitComponente
@@ -134,6 +134,7 @@ public class LogiMarketDbContext : DbContext
         modelBuilder.Entity<Pago>(entity =>
         {
             entity.HasKey(p => p.Id);
+            entity.HasIndex(p => p.PedidoId);
             entity.HasIndex(p => p.ReferenciaTransaccion).IsUnique();
             entity.HasIndex(p => p.ClaveIdempotencia).IsUnique();
             entity.Property(p => p.Monto).HasColumnType("TEXT");
@@ -147,6 +148,8 @@ public class LogiMarketDbContext : DbContext
         modelBuilder.Entity<MovimientoInventario>(entity =>
         {
             entity.HasKey(m => m.Id);
+            entity.HasIndex(m => m.ProductoId);
+            entity.HasIndex(m => m.Fecha);
             entity.Property(m => m.Sku).HasMaxLength(20).IsRequired();
             entity.Property(m => m.TipoMovimiento).HasConversion<string>();
             entity.Property(m => m.Motivo).HasMaxLength(200);
@@ -158,6 +161,7 @@ public class LogiMarketDbContext : DbContext
         {
             entity.HasKey(d => d.Id);
             entity.HasIndex(d => d.NumeroGuia).IsUnique();
+            entity.HasIndex(d => d.PedidoId);
             entity.Property(d => d.NumeroGuia).HasMaxLength(50).IsRequired();
             entity.Property(d => d.ProveedorLogistico).HasMaxLength(100);
             entity.Property(d => d.TipoEntrega).HasConversion<string>();
