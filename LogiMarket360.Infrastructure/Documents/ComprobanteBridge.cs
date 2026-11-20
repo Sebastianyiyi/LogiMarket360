@@ -2,18 +2,8 @@ namespace LogiMarket360.Infrastructure.Documents;
 
 using LogiMarket360.Application.Ports;
 
-// BRIDGE: ISalidaDocumento es la implementación (Implementor)
-// IComprobante es la abstracción
-
-public interface IComprobante
-{
-    ISalidaDocumento Salida { get; }
-    Task<string> EmitirAsync(object datos, CancellationToken ct = default);
-    string ObtenerTitulo();
-    string ObtenerContenido(object datos);
-}
-
-// Implementaciones concretas de salida (Implementor)
+// BRIDGE: las abstracciones IComprobante viven en Application; aquí se implementan
+// los medios concretos de salida (Implementor).
 public class SalidaVistaPreviaTxt : ISalidaDocumento
 {
     private readonly List<string> _vistasEmitidas = new();
@@ -48,78 +38,22 @@ public class SalidaArchivoTxt : ISalidaDocumento
     }
 }
 
-// Abstracciones concretas de comprobante (Abstraction)
-public record DatosComprobanteVenta(
-    string NumeroPedido, string Cliente, string EstrategiaDescuento,
-    decimal Subtotal, decimal Descuento, decimal CostoEnvio, decimal Total,
-    string ReferenciaPago, DateTime Fecha
-);
-
-public record DatosComprobanteDevolucion(
-    string NumeroPedido, string Cliente, decimal MontoReembolso,
-    string Motivo, string ReferenciaReembolso, DateTime Fecha
-);
-
-public class ComprobanteVenta : IComprobante
+public class SalidaDocumentoFactory : ISalidaDocumentoFactory
 {
-    public ISalidaDocumento Salida { get; }
-    private readonly DatosComprobanteVenta _datos;
+    private readonly string _carpetaBase;
 
-    public ComprobanteVenta(ISalidaDocumento salida, DatosComprobanteVenta datos)
+    public SalidaDocumentoFactory(string carpetaBase = "Comprobantes")
     {
-        Salida = salida ?? throw new ArgumentNullException(nameof(salida));
-        _datos = datos ?? throw new ArgumentNullException(nameof(datos));
+        _carpetaBase = carpetaBase;
     }
 
-    public string ObtenerTitulo() => $"COMPROBANTE DE VENTA - {_datos.NumeroPedido}";
+    public IReadOnlyList<string> MediosDisponibles => new[] { "VISTA_PREVIA", "ARCHIVO_TXT" };
 
-    public string ObtenerContenido(object datos)
+
+    public ISalidaDocumento Crear(string medio) => medio.Trim().ToUpperInvariant() switch
     {
-        return $"""
-            Pedido   : {_datos.NumeroPedido}
-            Cliente  : {_datos.Cliente}
-            Fecha    : {_datos.Fecha:dd/MM/yyyy HH:mm}
-            ---
-            Subtotal : USD {_datos.Subtotal:F2}
-            Descuento: USD {_datos.Descuento:F2} ({_datos.EstrategiaDescuento})
-            Envío    : USD {_datos.CostoEnvio:F2}
-            TOTAL    : USD {_datos.Total:F2}
-            ---
-            Pago Ref : {_datos.ReferenciaPago}
-            """;
-    }
-
-    public async Task<string> EmitirAsync(object datos, CancellationToken ct = default)
-        => await Salida.EmitirAsync(ObtenerTitulo(), ObtenerContenido(datos), ct);
-}
-
-public class ComprobanteDevolucion : IComprobante
-{
-    public ISalidaDocumento Salida { get; }
-    private readonly DatosComprobanteDevolucion _datos;
-
-    public ComprobanteDevolucion(ISalidaDocumento salida, DatosComprobanteDevolucion datos)
-    {
-        Salida = salida ?? throw new ArgumentNullException(nameof(salida));
-        _datos = datos ?? throw new ArgumentNullException(nameof(datos));
-    }
-
-    public string ObtenerTitulo() => $"COMPROBANTE DE DEVOLUCIÓN - {_datos.NumeroPedido}";
-
-    public string ObtenerContenido(object datos)
-    {
-        return $"""
-            Pedido   : {_datos.NumeroPedido}
-            Cliente  : {_datos.Cliente}
-            Fecha    : {_datos.Fecha:dd/MM/yyyy HH:mm}
-            Motivo   : {_datos.Motivo}
-            ---
-            Reembolso: USD {_datos.MontoReembolso:F2}
-            Ref.Remb.: {_datos.ReferenciaReembolso}
-            (Nota: No incluye tarifa de envío)
-            """;
-    }
-
-    public async Task<string> EmitirAsync(object datos, CancellationToken ct = default)
-        => await Salida.EmitirAsync(ObtenerTitulo(), ObtenerContenido(datos), ct);
+        "VISTA_PREVIA" => new SalidaVistaPreviaTxt(),
+        "ARCHIVO_TXT" => new SalidaArchivoTxt(_carpetaBase),
+        _ => throw new ArgumentOutOfRangeException(nameof(medio), $"Medio de salida no soportado: {medio}")
+    };
 }

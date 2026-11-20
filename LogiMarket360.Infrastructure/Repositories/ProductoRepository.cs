@@ -32,4 +32,7 @@ public class ProductoRepository : IProductoRepository
 
     public void Actualizar(Producto producto)
         => _context.Productos.Update(producto);
+
+    public void Eliminar(Producto producto)
+        => _context.Productos.Remove(producto);
 }

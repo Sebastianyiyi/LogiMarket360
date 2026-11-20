@@ -1,24 +1,19 @@
 namespace LogiMarket360.Infrastructure.Delivery;
 
+using LogiMarket360.Application.Ports;
 using LogiMarket360.Domain.Enums;
 
-// Abstract Factory: productos abstractos de entrega
-public interface ITarifaCalculo { decimal CalcularTarifa(); }
-public interface IPlazoCalculo { int CalcularPlazoEnDias(); }
-public interface IGuiaGenerador { string GenerarGuia(string numeroPedido); }
-
-// Abstract Factory: fábrica abstracta
-public interface IEntregaFactory
+// Abstract Factory: fábricas concretas de las familias ESTÁNDAR y EXPRÉS.
+public class TarifaEstandar : ITarifaCalculo
 {
-    TipoEntrega TipoEntrega { get; }
-    ITarifaCalculo CrearCalculadorTarifa();
-    IPlazoCalculo CrearCalculadorPlazo();
-    IGuiaGenerador CrearGeneradorGuia();
+    public decimal CalcularTarifa() => 5.00m;
 }
 
-// --- ESTÁNDAR ---
-public class TarifaEstandar : ITarifaCalculo { public decimal CalcularTarifa() => 5.00m; }
-public class PlazoEstandar : IPlazoCalculo { public int CalcularPlazoEnDias() => 3; }
+public class PlazoEstandar : IPlazoCalculo
+{
+    public int CalcularPlazoEnDias() => 3;
+}
+
 public class GuiaEstandar : IGuiaGenerador
 {
     public string GenerarGuia(string numeroPedido) =>
@@ -33,9 +28,16 @@ public class EntregaEstandarFactory : IEntregaFactory
     public IGuiaGenerador CrearGeneradorGuia() => new GuiaEstandar();
 }
 
-// --- EXPRÉS ---
-public class TarifaExpres : ITarifaCalculo { public decimal CalcularTarifa() => 12.00m; }
-public class PlazoExpres : IPlazoCalculo { public int CalcularPlazoEnDias() => 1; }
+public class TarifaExpres : ITarifaCalculo
+{
+    public decimal CalcularTarifa() => 12.00m;
+}
+
+public class PlazoExpres : IPlazoCalculo
+{
+    public int CalcularPlazoEnDias() => 1;
+}
+
 public class GuiaExpres : IGuiaGenerador
 {
     public string GenerarGuia(string numeroPedido) =>
@@ -50,13 +52,12 @@ public class EntregaExpresFactory : IEntregaFactory
     public IGuiaGenerador CrearGeneradorGuia() => new GuiaExpres();
 }
 
-// Selector de fábrica
-public static class EntregaFactorySelector
+public class EntregaFactoryProvider : IEntregaFactoryProvider
 {
-    public static IEntregaFactory ObtenerFactory(TipoEntrega tipo) => tipo switch
+    public IEntregaFactory Obtener(TipoEntrega tipoEntrega) => tipoEntrega switch
     {
         TipoEntrega.ESTANDAR => new EntregaEstandarFactory(),
         TipoEntrega.EXPRES => new EntregaExpresFactory(),
-        _ => throw new ArgumentOutOfRangeException(nameof(tipo), $"Tipo de entrega no soportado: {tipo}")
+        _ => throw new ArgumentOutOfRangeException(nameof(tipoEntrega), $"Tipo de entrega no soportado: {tipoEntrega}")
     };
 }

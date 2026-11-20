@@ -23,4 +23,10 @@ public class KitRepository : IKitRepository
 
     public async Task AgregarAsync(Kit kit, CancellationToken ct = default)
         => await _context.Kits.AddAsync(kit, ct);
+
+    public void Actualizar(Kit kit)
+        => _context.Kits.Update(kit);
+
+    public void Eliminar(Kit kit)
+        => _context.Kits.Remove(kit);
 }

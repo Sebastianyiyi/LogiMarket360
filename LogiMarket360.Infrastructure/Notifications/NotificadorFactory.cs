@@ -60,3 +60,30 @@ public class NotificadorSmsCreator : NotificadorCreator
 {
     public override INotificador CrearNotificador() => new NotificadorSms();
 }
+
+// Adaptador de selección: la elección del canal ocurre fuera del formulario.
+public class NotificadorFactory : INotificadorFactory
+{
+    private readonly string _canalPorDefecto;
+
+    public NotificadorFactory(string canalPorDefecto = "EMAIL")
+    {
+        _canalPorDefecto = canalPorDefecto.Trim().ToUpperInvariant();
+    }
+
+    public string CanalPorDefecto => _canalPorDefecto;
+
+    public INotificador Crear(string canal)
+    {
+        string seleccionado = string.IsNullOrWhiteSpace(canal) ? _canalPorDefecto : canal.Trim().ToUpperInvariant();
+
+        NotificadorCreator creator = seleccionado switch
+        {
+            "EMAIL" => new NotificadorEmailCreator(),
+            "SMS" => new NotificadorSmsCreator(),
+            _ => throw new ArgumentOutOfRangeException(nameof(canal), $"Canal de notificación no soportado: {canal}")
+        };
+
+        return creator.CrearNotificador();
+    }
+}

@@ -3,16 +3,23 @@ namespace LogiMarket360.Infrastructure.DI;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using LogiMarket360.Application.Facade;
+using LogiMarket360.Application.Patterns.Decorator;
+using LogiMarket360.Application.Patterns.Flyweight;
 using LogiMarket360.Application.Patterns.Observer;
+using LogiMarket360.Application.Patterns.Observer.Eventos;
 using LogiMarket360.Application.Patterns.Observer.Subscriptores;
+using LogiMarket360.Application.Patterns.Proxy;
 using LogiMarket360.Application.Patterns.Singleton;
+using LogiMarket360.Application.Patterns.TemplateMethod;
 using LogiMarket360.Application.Ports;
 using LogiMarket360.Application.Ports.Repositories;
+using LogiMarket360.Application.Security;
+using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.Infrastructure.Adapters;
 using LogiMarket360.Infrastructure.Data;
 using LogiMarket360.Infrastructure.Delivery;
-using LogiMarket360.Infrastructure.Flyweight;
+using LogiMarket360.Infrastructure.Documents;
 using LogiMarket360.Infrastructure.Notifications;
 using LogiMarket360.Infrastructure.Repositories;
 
@@ -21,17 +28,23 @@ public static class InfrastructureServiceExtensions
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
         string connectionString,
-        Func<RolUsuario>? obtenerRolActual = null,
-        bool usarPasarelaFallo = false)
+        Func<RolUsuario?>? obtenerRolActual = null,
+        bool usarPasarelaFallo = false,
+        string canalNotificacion = "EMAIL")
     {
-        // EF Core + SQLite
         services.AddDbContext<LogiMarketDbContext>(options =>
             options.UseSqlite(connectionString));
 
-        // Unit of Work
-        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        // Sesión y autorización
+        services.AddSingleton<SesionServicio>();
+        services.AddSingleton<ISesionActual>(sp => sp.GetRequiredService<SesionServicio>());
+        services.AddSingleton<IAutorizador>(sp => sp.GetRequiredService<SesionServicio>());
 
-        // Repositorios
+        // Métricas de sesión (Singleton compartido)
+        services.AddSingleton<MetricasSesion>(MetricasSesion.Instancia);
+
+        // Unit of Work y repositorios
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         services.AddScoped<IProductoRepository, ProductoRepository>();
         services.AddScoped<IKitRepository, KitRepository>();
         services.AddScoped<IPedidoRepository, PedidoRepository>();
@@ -44,63 +57,53 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<IPagoRepository, PagoRepository>();
         services.AddScoped<IDespachoRepository, DespachoRepository>();
 
-        // Pasarela: Adapter legado → Decorator de Auditoría → Proxy de autorización
+        // Pasarela: Adapter legado → Decorator de auditoría → Proxy de autorización
         services.AddSingleton<PasarelaLegadaSimulada>();
+        services.AddSingleton<IEntregaFactoryProvider, EntregaFactoryProvider>();
+        services.AddSingleton<INotificadorFactory>(_ => new NotificadorFactory(canalNotificacion));
+        services.AddSingleton<ISalidaDocumentoFactory>(_ => new SalidaDocumentoFactory());
+        services.AddSingleton<CatalogoVisualFlyweightFactory>();
 
-        if (usarPasarelaFallo)
+        services.AddTransient<IPasarelaPago>(sp =>
         {
-            // Para pruebas P06
-            services.AddTransient<IPasarelaPago>(sp =>
-            {
-                var pasarelaFallo = new PasarelaFallaSimulada();
-                return pasarelaFallo;
-            });
-        }
-        else if (obtenerRolActual != null)
-        {
-            services.AddTransient<IPasarelaPago>(sp =>
-            {
-                var legada = sp.GetRequiredService<PasarelaLegadaSimulada>();
-                var adapter = new PasarelaLegadaAdapter(legada);
-                var decorator = new Application.Patterns.Decorator.AuditoriaPagoDecorator(
-                    adapter, msg => Console.WriteLine(msg));
-                return new Application.Patterns.Proxy.PagoAutorizadoProxy(decorator, obtenerRolActual);
-            });
-        }
-        else
-        {
-            services.AddTransient<IPasarelaPago>(sp =>
-            {
-                var legada = sp.GetRequiredService<PasarelaLegadaSimulada>();
-                return new PasarelaLegadaAdapter(legada);
-            });
-        }
+            IPasarelaPago pasarelaBase = usarPasarelaFallo
+                ? new PasarelaFallaSimulada()
+                : new PasarelaLegadaAdapter(sp.GetRequiredService<PasarelaLegadaSimulada>());
 
-        // Observer / Publicador
-        services.AddSingleton<IEventoPublicador>(sp =>
-        {
-            var pub = new EventoPublicador();
-            var metricas = sp.GetRequiredService<MetricasSesion>();
-            var auditRepo = sp.GetRequiredService<IAuditoriaRepository>();
-
-            pub.Suscribir<Application.Patterns.Observer.Eventos.PedidoPagadoEvent>(
-                new MetricasObserver(metricas));
-            pub.Suscribir<Application.Patterns.Observer.Eventos.PedidoPagadoEvent>(
-                new AuditoriaObserver(auditRepo));
-            pub.Suscribir<Application.Patterns.Observer.Eventos.DespachoRegistradoEvent>(
-                new AuditoriaObserver(auditRepo));
-            pub.Suscribir<Application.Patterns.Observer.Eventos.DevolucionAceptadaEvent>(
-                new MetricasObserver(metricas));
-            pub.Suscribir<Application.Patterns.Observer.Eventos.DevolucionAceptadaEvent>(
-                new AuditoriaObserver(auditRepo));
-            return pub;
+            var decorator = new AuditoriaPagoDecorator(pasarelaBase, msg => Console.WriteLine(msg));
+            Func<RolUsuario?> rol = obtenerRolActual ?? (() => sp.GetRequiredService<ISesionActual>().Rol);
+            return new PagoAutorizadoProxy(decorator, rol);
         });
 
-        // Singleton de métricas de sesión
-        services.AddSingleton<MetricasSesion>(MetricasSesion.Instancia);
+        // Observer / Publicador (scoped para inyectar repositorios scoped)
+        services.AddScoped<IEventoPublicador>(sp =>
+        {
+            var publicador = new EventoPublicador();
+            var metricas = sp.GetRequiredService<MetricasSesion>();
+            var auditoriaRepository = sp.GetRequiredService<IAuditoriaRepository>();
 
-        // Flyweight factory
-        services.AddSingleton<CatalogoVisualFlyweightFactory>();
+            publicador.Suscribir<PedidoPagadoEvent>(new MetricasObserver(metricas));
+            publicador.Suscribir<PedidoPagadoEvent>(new AuditoriaObserver(auditoriaRepository));
+            publicador.Suscribir<DespachoRegistradoEvent>(new AuditoriaObserver(auditoriaRepository));
+            publicador.Suscribir<DevolucionAceptadaEvent>(new MetricasObserver(metricas));
+            publicador.Suscribir<DevolucionAceptadaEvent>(new AuditoriaObserver(auditoriaRepository));
+
+            return publicador;
+        });
+
+        // Servicios de aplicación
+        services.AddScoped<OutboxProcessor>();
+        services.AddScoped<IOutboxProcesador>(sp => sp.GetRequiredService<OutboxProcessor>());
+        services.AddScoped<AutenticacionServicio>();
+        services.AddScoped<CatalogoServicio>();
+        services.AddScoped<ClienteServicio>();
+        services.AddScoped<PedidoBorradorServicio>();
+        services.AddScoped<ComprobanteServicio>();
+        services.AddScoped<ReporteServicio>();
+
+        // Template Method de devoluciones
+        services.AddScoped<DevolucionDefectoService>();
+        services.AddScoped<DevolucionArrepentimientoService>();
 
         // Facade de confirmación
         services.AddScoped<ConfirmacionPedidoFacade>();
