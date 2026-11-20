@@ -3,6 +3,7 @@ namespace LogiMarket360.WinForms;
 using LogiMarket360.Infrastructure.Data;
 using LogiMarket360.Infrastructure.DI;
 using Microsoft.Extensions.DependencyInjection;
+using LogiMarket360.WinForms.Views;
 
 internal static class Program
 {
@@ -22,6 +23,8 @@ internal static class Program
             var services = new ServiceCollection();
             services.AddInfrastructure($"Data Source={databasePath}");
             services.AddScoped<Form1>();
+            services.AddScoped<CatalogoControl>();
+            services.AddScoped<ClientesControl>();
 
             using var provider = services.BuildServiceProvider(new ServiceProviderOptions
             {

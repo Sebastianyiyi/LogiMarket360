@@ -2,15 +2,20 @@ namespace LogiMarket360.WinForms;
 
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
+using LogiMarket360.WinForms.Views;
 
 public partial class Form1 : Form
 {
     private readonly AutenticacionServicio _autenticacion;
+    private readonly CatalogoControl _catalogo;
+    private readonly ClientesControl _clientes;
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
 
-    public Form1(AutenticacionServicio autenticacion)
+    public Form1(AutenticacionServicio autenticacion, CatalogoControl catalogo, ClientesControl clientes)
     {
         _autenticacion = autenticacion;
+        _catalogo = catalogo;
+        _clientes = clientes;
         InitializeComponent();
         Controls.Add(_content);
         MostrarAcceso();
@@ -140,10 +145,10 @@ public partial class Form1 : Form
         };
 
         var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(16, 8) };
-        tabs.TabPages.Add(CrearPagina("Catálogo", "Gestión de productos, kits y existencias"));
+        tabs.TabPages.Add(CrearPagina("Catálogo", _catalogo));
         if (rol is RolUsuario.ADMIN or RolUsuario.VENTAS)
         {
-            tabs.TabPages.Add(CrearPagina("Clientes", "Gestión de clientes y categorías"));
+            tabs.TabPages.Add(CrearPagina("Clientes", _clientes));
             tabs.TabPages.Add(CrearPagina("Pedidos", "Borradores, valoración y confirmación"));
             tabs.TabPages.Add(CrearPagina("Devoluciones", "Políticas, reintegros y reembolsos"));
         }
@@ -167,6 +172,14 @@ public partial class Form1 : Form
             AutoSize = true,
             Location = new Point(22, 22)
         });
+        return pagina;
+    }
+
+    private static TabPage CrearPagina(string titulo, Control contenido)
+    {
+        var pagina = new TabPage(titulo) { Name = $"tab{titulo}" };
+        contenido.Dock = DockStyle.Fill;
+        pagina.Controls.Add(contenido);
         return pagina;
     }
 }
