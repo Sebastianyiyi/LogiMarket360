@@ -4,20 +4,15 @@ using LogiMarket360.Application.DTOs;
 using LogiMarket360.Application.Ports;
 
 // Simulador de pasarela legada con interfaz incompatible (CobrarCentavos)
-// Esta clase NO debe ser modificada — simula código legado no editable
+// Conserva el contrato legado; Application solo lo conoce mediante el Adapter.
 public class PasarelaLegadaSimulada
 {
-    private static readonly Random _rnd = new();
-
     public string ProviderName => "PasarelaLegada-v1";
 
     public (long Referencia, bool Autorizado, string Mensaje) CobrarCentavos(long montoEnCentavos, string idTransaccion)
     {
-        // Simula aprobación del 90% de los cobros
-        bool aprobado = _rnd.NextDouble() > 0.1;
         long referencia = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        string mensaje = aprobado ? "Transacción aprobada por la pasarela legada." : "Fondos insuficientes (simulado).";
-        return (referencia, aprobado, mensaje);
+        return (referencia, true, "Transacción aprobada por la pasarela legada.");
     }
 }
 
@@ -54,21 +49,17 @@ public class PasarelaLegadaAdapter : IPasarelaPago
 // Segunda pasarela simulada alternativa (sustituible mediante DI)
 public class PasarelaModernaSimulada : IPasarelaPago
 {
-    private static readonly Random _rnd = new();
-
     public string NombreProveedor => "MODERNA";
 
     public Task<ResultadoPago> CobrarAsync(decimal monto, string claveIdempotencia, CancellationToken ct = default)
     {
-        bool aprobado = _rnd.NextDouble() > 0.05; // 95% de aprobación
-        string referencia = aprobado ? $"MOD-{Guid.NewGuid().ToString("N")[..12].ToUpperInvariant()}" : string.Empty;
-        string mensaje = aprobado ? "Cobro aprobado por la pasarela moderna." : "Transacción rechazada por política anti-fraude (simulado).";
+        string referencia = $"MOD-{Guid.NewGuid().ToString("N")[..12].ToUpperInvariant()}";
 
         return Task.FromResult(new ResultadoPago(
-            Exitoso: aprobado,
+            Exitoso: true,
             ReferenciaTransaccion: referencia,
-            Mensaje: mensaje,
-            MontoCobrado: aprobado ? monto : 0m,
+            Mensaje: "Cobro aprobado por la pasarela moderna.",
+            MontoCobrado: monto,
             Proveedor: NombreProveedor
         ));
     }

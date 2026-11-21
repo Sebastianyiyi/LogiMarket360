@@ -61,6 +61,16 @@ public static class InfrastructureServiceExtensions
 
         // Pasarela: Adapter legado → Decorator de auditoría → Proxy de autorización
         services.AddSingleton<PasarelaLegadaSimulada>();
+        services.AddSingleton<PasarelaLegadaAdapter>();
+        services.AddSingleton<PasarelaModernaSimulada>();
+        services.AddSingleton<IProveedorPagoSelector>(sp =>
+        {
+            var selector = new ProveedorPagoSelector(
+                sp.GetRequiredService<PasarelaLegadaAdapter>(),
+                sp.GetRequiredService<PasarelaModernaSimulada>());
+            selector.ConfigurarModoFallo(usarPasarelaFallo);
+            return selector;
+        });
         services.AddSingleton<IEntregaFactoryProvider, EntregaFactoryProvider>();
         services.AddSingleton<INotificadorFactory>(_ => new NotificadorFactory(canalNotificacion));
         services.AddSingleton<ISalidaDocumentoFactory>(_ => new SalidaDocumentoFactory());
@@ -68,10 +78,7 @@ public static class InfrastructureServiceExtensions
 
         services.AddTransient<IPasarelaPago>(sp =>
         {
-            IPasarelaPago pasarelaBase = usarPasarelaFallo
-                ? new PasarelaFallaSimulada()
-                : new PasarelaLegadaAdapter(sp.GetRequiredService<PasarelaLegadaSimulada>());
-
+            IPasarelaPago pasarelaBase = sp.GetRequiredService<IProveedorPagoSelector>();
             var decorator = new AuditoriaPagoDecorator(pasarelaBase, msg => Console.WriteLine(msg));
             Func<RolUsuario?> rol = obtenerRolActual ?? (() => sp.GetRequiredService<ISesionActual>().Rol);
             return new PagoAutorizadoProxy(decorator, rol);
