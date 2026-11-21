@@ -19,7 +19,7 @@ public class KitRepository : IKitRepository
             .FirstOrDefaultAsync(k => k.Id == id, ct);
 
     public async Task<IReadOnlyList<Kit>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Kits.Include(k => k.Componentes).ToListAsync(ct);
+        => await _context.Kits.AsNoTracking().Include(k => k.Componentes).ToListAsync(ct);
 
     public async Task AgregarAsync(Kit kit, CancellationToken ct = default)
         => await _context.Kits.AddAsync(kit, ct);

@@ -3,10 +3,11 @@ namespace LogiMarket360.WinForms;
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.WinForms.Views;
+using Microsoft.Extensions.DependencyInjection;
 
 public partial class LogiMarketView : Form
 {
-    private readonly AutenticacionServicio _autenticacion;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly CatalogoControl _catalogo;
     private readonly ClientesControl _clientes;
     private readonly PedidosControl _pedidos;
@@ -16,7 +17,7 @@ public partial class LogiMarketView : Form
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
 
     public LogiMarketView(
-        AutenticacionServicio autenticacion,
+        IServiceScopeFactory scopeFactory,
         CatalogoControl catalogo,
         ClientesControl clientes,
         PedidosControl pedidos,
@@ -24,7 +25,7 @@ public partial class LogiMarketView : Form
         DevolucionesControl devoluciones,
         ConsultasControl consultas)
     {
-        _autenticacion = autenticacion;
+        _scopeFactory = scopeFactory;
         _catalogo = catalogo;
         _clientes = clientes;
         _pedidos = pedidos;
@@ -84,7 +85,10 @@ public partial class LogiMarketView : Form
             login.Enabled = false;
             try
             {
-                var resultado = await _autenticacion.IniciarSesionAsync(username.Text, password.Text);
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var resultado = await scope.ServiceProvider
+                    .GetRequiredService<AutenticacionServicio>()
+                    .IniciarSesionAsync(username.Text, password.Text);
                 if (!resultado.Exitoso || resultado.Usuario is null)
                 {
                     feedback.Text = resultado.Mensaje;
@@ -141,9 +145,10 @@ public partial class LogiMarketView : Form
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
             Location = new Point(ClientSize.Width - 130, 16)
         };
-        logout.Click += (_, _) =>
+        logout.Click += async (_, _) =>
         {
-            _autenticacion.CerrarSesion();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            scope.ServiceProvider.GetRequiredService<AutenticacionServicio>().CerrarSesion();
             MostrarAcceso();
         };
         header.Resize += (_, _) => logout.Left = header.ClientSize.Width - logout.Width - 20;

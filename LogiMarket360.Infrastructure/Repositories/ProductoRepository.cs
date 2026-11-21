@@ -17,12 +17,13 @@ public class ProductoRepository : IProductoRepository
         => await _context.Productos.FindAsync(new object[] { id }, ct);
 
     public async Task<IReadOnlyList<Producto>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Productos.ToListAsync(ct);
+        => await _context.Productos.AsNoTracking().ToListAsync(ct);
 
     public async Task<IReadOnlyList<Producto>> BuscarAsync(string criterio, CancellationToken ct = default)
     {
         string c = criterio.ToUpperInvariant();
         return await _context.Productos
+            .AsNoTracking()
             .Where(p => p.Sku.Contains(c) || p.Nombre.Contains(criterio))
             .ToListAsync(ct);
     }

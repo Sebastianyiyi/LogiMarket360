@@ -22,13 +22,13 @@ internal static class Program
 
             var services = new ServiceCollection();
             services.AddInfrastructure($"Data Source={databasePath}");
-            services.AddScoped<LogiMarketView>();
-            services.AddScoped<CatalogoControl>();
-            services.AddScoped<ClientesControl>();
-            services.AddScoped<PedidosControl>();
-            services.AddScoped<LogisticaControl>();
-            services.AddScoped<DevolucionesControl>();
-            services.AddScoped<ConsultasControl>();
+            services.AddSingleton<LogiMarketView>();
+            services.AddSingleton<CatalogoControl>();
+            services.AddSingleton<ClientesControl>();
+            services.AddSingleton<PedidosControl>();
+            services.AddSingleton<LogisticaControl>();
+            services.AddSingleton<DevolucionesControl>();
+            services.AddSingleton<ConsultasControl>();
 
             using var provider = services.BuildServiceProvider(new ServiceProviderOptions
             {
@@ -36,11 +36,13 @@ internal static class Program
                 ValidateScopes = true
             });
 
-            await using var scope = provider.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<LogiMarketDbContext>();
-            await DatabaseSeeder.InicializarAsync(db);
+            await using (var initializationScope = provider.CreateAsyncScope())
+            {
+                var db = initializationScope.ServiceProvider.GetRequiredService<LogiMarketDbContext>();
+                await DatabaseSeeder.InicializarAsync(db);
+            }
 
-            var mainForm = scope.ServiceProvider.GetRequiredService<LogiMarketView>();
+            var mainForm = provider.GetRequiredService<LogiMarketView>();
             global::System.Windows.Forms.Application.Run(mainForm);
         }
         catch (Exception ex)

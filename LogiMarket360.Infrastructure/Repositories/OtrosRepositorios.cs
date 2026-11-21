@@ -17,7 +17,7 @@ public class ClienteRepository : IClienteRepository
         => await _context.Clientes.FirstOrDefaultAsync(c => c.Identificacion == identificacion, ct);
 
     public async Task<IReadOnlyList<Cliente>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Clientes.ToListAsync(ct);
+        => await _context.Clientes.AsNoTracking().ToListAsync(ct);
 
     public async Task AgregarAsync(Cliente cliente, CancellationToken ct = default)
         => await _context.Clientes.AddAsync(cliente, ct);
@@ -38,7 +38,7 @@ public class UsuarioRepository : IUsuarioRepository
         => await _context.Usuarios.FindAsync(new object[] { id }, ct);
 
     public async Task<IReadOnlyList<Usuario>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Usuarios.ToListAsync(ct);
+        => await _context.Usuarios.AsNoTracking().ToListAsync(ct);
 
     public async Task AgregarAsync(Usuario usuario, CancellationToken ct = default)
         => await _context.Usuarios.AddAsync(usuario, ct);
@@ -57,12 +57,13 @@ public class MovimientoInventarioRepository : IMovimientoInventarioRepository
 
     public async Task<IReadOnlyList<MovimientoInventario>> ListarPorProductoAsync(int productoId, CancellationToken ct = default)
         => await _context.MovimientosInventario
+            .AsNoTracking()
             .Where(m => m.ProductoId == productoId)
             .OrderByDescending(m => m.Fecha)
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<MovimientoInventario>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.MovimientosInventario.OrderByDescending(m => m.Fecha).ToListAsync(ct);
+        => await _context.MovimientosInventario.AsNoTracking().OrderByDescending(m => m.Fecha).ToListAsync(ct);
 }
 
 public class DevolucionRepository : IDevolucionRepository
@@ -77,7 +78,7 @@ public class DevolucionRepository : IDevolucionRepository
         => await _context.Devoluciones.FirstOrDefaultAsync(d => d.PedidoId == pedidoId, ct);
 
     public async Task<IReadOnlyList<Devolucion>> ListarTodasAsync(CancellationToken ct = default)
-        => await _context.Devoluciones.OrderByDescending(d => d.FechaSolicitud).ToListAsync(ct);
+        => await _context.Devoluciones.AsNoTracking().OrderByDescending(d => d.FechaSolicitud).ToListAsync(ct);
 
     public async Task AgregarAsync(Devolucion devolucion, CancellationToken ct = default)
         => await _context.Devoluciones.AddAsync(devolucion, ct);
@@ -95,7 +96,7 @@ public class AuditoriaRepository : IAuditoriaRepository
         => await _context.Auditorias.AddAsync(auditoria, ct);
 
     public async Task<IReadOnlyList<Auditoria>> ListarRecientesAsync(int limite = 100, CancellationToken ct = default)
-        => await _context.Auditorias.OrderByDescending(a => a.Fecha).Take(limite).ToListAsync(ct);
+        => await _context.Auditorias.AsNoTracking().OrderByDescending(a => a.Fecha).Take(limite).ToListAsync(ct);
 }
 
 public class EventoOutboxRepository : IEventoOutboxRepository
@@ -114,7 +115,7 @@ public class EventoOutboxRepository : IEventoOutboxRepository
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<EventoOutbox>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.EventosOutbox.OrderByDescending(e => e.FechaCreacion).ToListAsync(ct);
+        => await _context.EventosOutbox.AsNoTracking().OrderByDescending(e => e.FechaCreacion).ToListAsync(ct);
 
     public void Actualizar(EventoOutbox evento)
         => _context.EventosOutbox.Update(evento);

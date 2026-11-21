@@ -3,10 +3,11 @@ namespace LogiMarket360.WinForms.Views;
 using LogiMarket360.Application.DTOs;
 using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 public sealed class CatalogoControl : UserControl, IComponenteVista
 {
-    private readonly CatalogoServicio _servicio;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IFormularioPrincipalMediator _mediator;
     private readonly DataGridView _productos = CrearGrid();
     private readonly DataGridView _kits = CrearGrid();
@@ -19,9 +20,9 @@ public sealed class CatalogoControl : UserControl, IComponenteVista
     private readonly Label _estado = new() { AutoSize = true, ForeColor = Color.DimGray };
     private int? _productoId;
 
-    public CatalogoControl(CatalogoServicio servicio, IFormularioPrincipalMediator mediator)
+    public CatalogoControl(IServiceScopeFactory scopeFactory, IFormularioPrincipalMediator mediator)
     {
-        _servicio = servicio;
+        _scopeFactory = scopeFactory;
         _mediator = mediator;
         Dock = DockStyle.Fill;
         Construir();
@@ -77,8 +78,10 @@ public sealed class CatalogoControl : UserControl, IComponenteVista
     {
         try
         {
-            var productos = await _servicio.BuscarProductosAsync(_buscar.Text, ct);
-            var kits = await _servicio.ListarKitsAsync(ct);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var servicio = scope.ServiceProvider.GetRequiredService<CatalogoServicio>();
+            var productos = await servicio.BuscarProductosAsync(_buscar.Text, ct);
+            var kits = await servicio.ListarKitsAsync(ct);
             _productos.DataSource = productos.ToList();
             _kits.DataSource = kits.Select(k => new { k.Codigo, k.Nombre, k.Precio, k.PesoKg, Componentes = k.Componentes.Count }).ToList();
             _estado.Text = $"{productos.Count} productos · {kits.Count} kits";
@@ -90,9 +93,11 @@ public sealed class CatalogoControl : UserControl, IComponenteVista
     {
         try
         {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var servicio = scope.ServiceProvider.GetRequiredService<CatalogoServicio>();
             var resultado = _productoId is null
-                ? await _servicio.CrearProductoAsync(_sku.Text, _nombre.Text, _precio.Value, (int)_stock.Value, _peso.Value)
-                : await _servicio.ActualizarProductoAsync(_productoId.Value, _nombre.Text, _precio.Value, _peso.Value);
+                ? await servicio.CrearProductoAsync(_sku.Text, _nombre.Text, _precio.Value, (int)_stock.Value, _peso.Value)
+                : await servicio.ActualizarProductoAsync(_productoId.Value, _nombre.Text, _precio.Value, _peso.Value);
             _estado.Text = resultado.Mensaje;
             if (resultado.Exitoso)
             {
@@ -108,7 +113,9 @@ public sealed class CatalogoControl : UserControl, IComponenteVista
         if (_productoId is null) { _estado.Text = "Seleccione un producto."; return; }
         try
         {
-            var resultado = await _servicio.AjustarStockAsync(_productoId.Value, (int)_stock.Value, "Ajuste desde catálogo", _sku.Text);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var servicio = scope.ServiceProvider.GetRequiredService<CatalogoServicio>();
+            var resultado = await servicio.AjustarStockAsync(_productoId.Value, (int)_stock.Value, "Ajuste desde catálogo", _sku.Text);
             _estado.Text = resultado.Mensaje;
             if (resultado.Exitoso) await CargarAsync();
         }

@@ -23,5 +23,5 @@ public class PagoRepository : IPagoRepository
             .FirstOrDefaultAsync(ct);
 
     public async Task<IReadOnlyList<Pago>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Pagos.OrderByDescending(p => p.FechaPago).ToListAsync(ct);
+        => await _context.Pagos.AsNoTracking().OrderByDescending(p => p.FechaPago).ToListAsync(ct);
 }

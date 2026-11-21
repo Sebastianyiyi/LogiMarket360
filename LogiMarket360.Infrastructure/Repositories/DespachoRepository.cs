@@ -20,7 +20,7 @@ public class DespachoRepository : IDespachoRepository
             .FirstOrDefaultAsync(ct);
 
     public async Task<IReadOnlyList<Despacho>> ListarTodosAsync(CancellationToken ct = default)
-        => await _context.Despachos.OrderByDescending(d => d.FechaDespacho).ToListAsync(ct);
+        => await _context.Despachos.AsNoTracking().OrderByDescending(d => d.FechaDespacho).ToListAsync(ct);
 
     public void Actualizar(Despacho despacho)
         => _context.Despachos.Update(despacho);

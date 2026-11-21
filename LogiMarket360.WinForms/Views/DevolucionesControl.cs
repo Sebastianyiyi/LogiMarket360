@@ -5,12 +5,11 @@ using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Patterns.TemplateMethod;
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 public sealed class DevolucionesControl : UserControl, IComponenteVista
 {
-    private readonly ReporteServicio _reportes;
-    private readonly ICommandFactory _factory;
-    private readonly ICommandInvoker _invoker;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IFormularioPrincipalMediator _mediator;
     private readonly DataGridView _grid = Grid();
     private readonly ComboBox _motivo = new() { DataSource = Enum.GetValues<MotivoDevolucion>(), DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
@@ -19,9 +18,9 @@ public sealed class DevolucionesControl : UserControl, IComponenteVista
     private readonly TextBox _detalle = new() { PlaceholderText = "Detalle del motivo", Width = 240 };
     private readonly Label _estado = new() { AutoSize = true };
 
-    public DevolucionesControl(ReporteServicio reportes, ICommandFactory factory, ICommandInvoker invoker, IFormularioPrincipalMediator mediator)
+    public DevolucionesControl(IServiceScopeFactory scopeFactory, IFormularioPrincipalMediator mediator)
     {
-        _reportes = reportes; _factory = factory; _invoker = invoker; _mediator = mediator;
+        _scopeFactory = scopeFactory; _mediator = mediator;
         Dock = DockStyle.Fill;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 76, Padding = new Padding(5), AutoScroll = true };
         var process = new Button { Text = "Procesar devolución" }; process.Click += async (_, _) => await ProcesarAsync();
@@ -39,8 +38,10 @@ public sealed class DevolucionesControl : UserControl, IComponenteVista
     {
         try
         {
-            var pedidos = await _reportes.ListarPedidosAsync(ct);
-            var devoluciones = await _reportes.ListarDevolucionesAsync(ct);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var reportes = scope.ServiceProvider.GetRequiredService<ReporteServicio>();
+            var pedidos = await reportes.ListarPedidosAsync(ct);
+            var devoluciones = await reportes.ListarDevolucionesAsync(ct);
             _grid.DataSource = pedidos.Where(p => p.Estado == EstadoPedido.ENTREGADO).Select(p => new Fila(
                 p.Id, p.NumeroPedido, p.Cliente, p.Total,
                 devoluciones.FirstOrDefault(d => d.PedidoId == p.Id)?.Aprobada,
@@ -54,7 +55,10 @@ public sealed class DevolucionesControl : UserControl, IComponenteVista
     {
         if (_grid.CurrentRow?.DataBoundItem is not Fila fila) return;
         var solicitud = new SolicitudDevolucion(fila.Id, (MotivoDevolucion)_motivo.SelectedItem!, (int)_dias.Value, _sinUso.Checked, _detalle.Text);
-        var result = await _invoker.InvocarAsync(_factory.CrearDevolucion(solicitud));
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var factory = scope.ServiceProvider.GetRequiredService<ICommandFactory>();
+        var result = await scope.ServiceProvider.GetRequiredService<ICommandInvoker>()
+            .InvocarAsync(factory.CrearDevolucion(solicitud));
         _estado.Text = result.Mensaje; await CargarAsync();
         if (result.Exitoso) await _mediator.NotificarAsync(this, new CambioAplicacion("DevolucionAceptada", new[] { AreaVista.Catalogo, AreaVista.Metricas }));
     }

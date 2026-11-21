@@ -42,7 +42,7 @@ public class PedidoRepository : IPedidoRepository
 
     public async Task<IReadOnlyList<Pedido>> ListarTodosAsync(CancellationToken ct = default)
     {
-        var pedidos = await QueryConIncludes().OrderByDescending(p => p.FechaCreacion).ToListAsync(ct);
+        var pedidos = await QueryConIncludes().AsNoTracking().OrderByDescending(p => p.FechaCreacion).ToListAsync(ct);
         pedidos.ForEach(p => p.SincronizarEstadoDesdePersistencia());
         return pedidos;
     }
@@ -50,6 +50,7 @@ public class PedidoRepository : IPedidoRepository
     public async Task<IReadOnlyList<Pedido>> ListarPorEstadoAsync(EstadoPedido estado, CancellationToken ct = default)
     {
         var pedidos = await QueryConIncludes()
+            .AsNoTracking()
             .Where(p => p.EstadoCodigo == estado)
             .ToListAsync(ct);
         pedidos.ForEach(p => p.SincronizarEstadoDesdePersistencia());

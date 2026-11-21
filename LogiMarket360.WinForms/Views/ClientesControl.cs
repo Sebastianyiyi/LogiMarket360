@@ -4,10 +4,11 @@ using LogiMarket360.Application.DTOs;
 using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 public sealed class ClientesControl : UserControl
 {
-    private readonly ClienteServicio _servicio;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly DataGridView _grid = new()
     {
         Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = true,
@@ -21,9 +22,9 @@ public sealed class ClientesControl : UserControl
     private readonly Label _estado = new() { AutoSize = true };
     private int? _clienteId;
 
-    public ClientesControl(ClienteServicio servicio)
+    public ClientesControl(IServiceScopeFactory scopeFactory)
     {
-        _servicio = servicio;
+        _scopeFactory = scopeFactory;
         Dock = DockStyle.Fill;
         _categoria.DataSource = Enum.GetValues<CategoriaCliente>();
         Construir();
@@ -55,7 +56,8 @@ public sealed class ClientesControl : UserControl
     {
         try
         {
-            var datos = await _servicio.BuscarAsync(_buscar.Text);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var datos = await scope.ServiceProvider.GetRequiredService<ClienteServicio>().BuscarAsync(_buscar.Text);
             _grid.DataSource = datos.ToList();
             _estado.Text = $"{datos.Count} clientes";
         }
@@ -66,10 +68,12 @@ public sealed class ClientesControl : UserControl
     {
         try
         {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var servicio = scope.ServiceProvider.GetRequiredService<ClienteServicio>();
             var categoria = (CategoriaCliente)_categoria.SelectedItem!;
             var resultado = _clienteId is null
-                ? await _servicio.CrearAsync(_nombre.Text, _identificacion.Text, categoria)
-                : await _servicio.ActualizarAsync(_clienteId.Value, _nombre.Text, _identificacion.Text, categoria);
+                ? await servicio.CrearAsync(_nombre.Text, _identificacion.Text, categoria)
+                : await servicio.ActualizarAsync(_clienteId.Value, _nombre.Text, _identificacion.Text, categoria);
             _estado.Text = resultado.Mensaje;
             if (resultado.Exitoso) await CargarAsync();
         }
@@ -81,7 +85,9 @@ public sealed class ClientesControl : UserControl
         if (_grid.CurrentRow?.DataBoundItem is not ClienteDto cliente) return;
         try
         {
-            var resultado = await _servicio.CambiarEstadoAsync(cliente.Id, !cliente.Activo);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var resultado = await scope.ServiceProvider.GetRequiredService<ClienteServicio>()
+                .CambiarEstadoAsync(cliente.Id, !cliente.Activo);
             _estado.Text = resultado.Mensaje;
             if (resultado.Exitoso) await CargarAsync();
         }

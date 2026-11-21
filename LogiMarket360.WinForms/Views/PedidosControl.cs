@@ -6,14 +6,11 @@ using LogiMarket360.Application.Patterns.Command;
 using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Services;
 using LogiMarket360.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 public sealed class PedidosControl : UserControl, IComponenteVista
 {
-    private readonly ClienteServicio _clientesServicio;
-    private readonly CatalogoServicio _catalogoServicio;
-    private readonly PedidoBorradorServicio _pedidosServicio;
-    private readonly ICommandFactory _commandFactory;
-    private readonly ICommandInvoker _invoker;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IFormularioPrincipalMediator _mediator;
     private readonly ComboBox _clientes = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly ComboBox _elementos = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
@@ -25,18 +22,10 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     private readonly Label _estado = new() { AutoSize = true, ForeColor = Color.FromArgb(24, 62, 93) };
 
     public PedidosControl(
-        ClienteServicio clientesServicio,
-        CatalogoServicio catalogoServicio,
-        PedidoBorradorServicio pedidosServicio,
-        ICommandFactory commandFactory,
-        ICommandInvoker invoker,
+        IServiceScopeFactory scopeFactory,
         IFormularioPrincipalMediator mediator)
     {
-        _clientesServicio = clientesServicio;
-        _catalogoServicio = catalogoServicio;
-        _pedidosServicio = pedidosServicio;
-        _commandFactory = commandFactory;
-        _invoker = invoker;
+        _scopeFactory = scopeFactory;
         _mediator = mediator;
         Dock = DockStyle.Fill;
         _entrega.DataSource = Enum.GetValues<TipoEntrega>();
@@ -88,7 +77,8 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     {
         try
         {
-            var clientes = await _clientesServicio.ListarAsync();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var clientes = await scope.ServiceProvider.GetRequiredService<ClienteServicio>().ListarAsync();
             _clientes.DataSource = clientes.Where(c => c.Activo).Select(c => new Opcion(c.Id, c.Nombre, c)).ToList();
             _clientes.DisplayMember = nameof(Opcion.Texto);
             await CargarCatalogoAsync();
@@ -101,8 +91,10 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     {
         try
         {
-            var productos = await _catalogoServicio.ListarProductosAsync(ct);
-            var kits = await _catalogoServicio.ListarKitsAsync(ct);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var servicio = scope.ServiceProvider.GetRequiredService<CatalogoServicio>();
+            var productos = await servicio.ListarProductosAsync(ct);
+            var kits = await servicio.ListarKitsAsync(ct);
             var opciones = productos.Select(p => new ElementoOpcion(p.Sku, $"{p.Sku} · {p.Nombre} · USD {p.Precio:F2}", false))
                 .Concat(kits.Select(k => new ElementoOpcion(k.Codigo, $"{k.Codigo} · {k.Nombre} · USD {k.Precio:F2}", true)))
                 .ToList();
@@ -116,7 +108,8 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     {
         try
         {
-            var pedidos = await _pedidosServicio.ListarAsync();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var pedidos = await scope.ServiceProvider.GetRequiredService<PedidoBorradorServicio>().ListarAsync();
             _pedidos.DataSource = pedidos.Select(p => new PedidoFila(
                 p.Id, p.NumeroPedido, p.Cliente, p.Estado, p.TipoEntrega,
                 p.Subtotal, p.Descuento, p.CostoEnvio, p.Total, p.IdempotencyKey)).ToList();
@@ -145,7 +138,9 @@ public sealed class PedidosControl : UserControl, IComponenteVista
         var solicitudes = _lineas.Select(x => new LineaPedidoSolicitud(x.Codigo, x.Cantidad, x.EsKit)).ToList();
         try
         {
-            var resultado = await _pedidosServicio.CrearBorradorAsync(cliente.Id, (TipoEntrega)_entrega.SelectedItem!, solicitudes);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var resultado = await scope.ServiceProvider.GetRequiredService<PedidoBorradorServicio>()
+                .CrearBorradorAsync(cliente.Id, (TipoEntrega)_entrega.SelectedItem!, solicitudes);
             _estado.Text = resultado.Mensaje;
             if (resultado.Exitoso) { _lineas.Clear(); await CargarPedidosAsync(); }
         }
@@ -155,7 +150,10 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     private async Task ConfirmarAsync()
     {
         if (_pedidos.CurrentRow?.DataBoundItem is not PedidoFila pedido) return;
-        var resultado = await _invoker.InvocarAsync(_commandFactory.CrearConfirmar(pedido.Id, pedido.ClaveIdempotencia));
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var factory = scope.ServiceProvider.GetRequiredService<ICommandFactory>();
+        var resultado = await scope.ServiceProvider.GetRequiredService<ICommandInvoker>()
+            .InvocarAsync(factory.CrearConfirmar(pedido.Id, pedido.ClaveIdempotencia));
         _estado.Text = resultado.Mensaje;
         await CargarPedidosAsync();
         if (resultado.Exitoso)
@@ -165,7 +163,10 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     private async Task CancelarAsync()
     {
         if (_pedidos.CurrentRow?.DataBoundItem is not PedidoFila pedido) return;
-        var resultado = await _invoker.InvocarAsync(_commandFactory.CrearCancelar(pedido.Id));
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var factory = scope.ServiceProvider.GetRequiredService<ICommandFactory>();
+        var resultado = await scope.ServiceProvider.GetRequiredService<ICommandInvoker>()
+            .InvocarAsync(factory.CrearCancelar(pedido.Id));
         _estado.Text = resultado.Mensaje;
         await CargarPedidosAsync();
     }
@@ -173,7 +174,9 @@ public sealed class PedidosControl : UserControl, IComponenteVista
     private async Task ClonarAsync()
     {
         if (_pedidos.CurrentRow?.DataBoundItem is not PedidoFila pedido) return;
-        var resultado = await _pedidosServicio.ClonarBorradorAsync(pedido.Id);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var resultado = await scope.ServiceProvider.GetRequiredService<PedidoBorradorServicio>()
+            .ClonarBorradorAsync(pedido.Id);
         _estado.Text = resultado.Mensaje;
         if (resultado.Exitoso) await CargarPedidosAsync();
     }

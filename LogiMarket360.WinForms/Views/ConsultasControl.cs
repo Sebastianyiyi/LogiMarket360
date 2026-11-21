@@ -2,20 +2,20 @@ namespace LogiMarket360.WinForms.Views;
 
 using LogiMarket360.Application.Patterns.Mediator;
 using LogiMarket360.Application.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 public sealed class ConsultasControl : UserControl, IComponenteVista
 {
-    private readonly ReporteServicio _reportes;
-    private readonly ComprobanteServicio _comprobantes;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IFormularioPrincipalMediator _mediator;
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly TextBox _filtro = new() { PlaceholderText = "ESTADO = PAGADO AND TOTAL >= 50", Width = 330 };
     private readonly Label _estado = new() { AutoSize = true };
     private readonly DataGridView _pedidos = Grid();
 
-    public ConsultasControl(ReporteServicio reportes, ComprobanteServicio comprobantes, IFormularioPrincipalMediator mediator)
+    public ConsultasControl(IServiceScopeFactory scopeFactory, IFormularioPrincipalMediator mediator)
     {
-        _reportes = reportes; _comprobantes = comprobantes; _mediator = mediator;
+        _scopeFactory = scopeFactory; _mediator = mediator;
         Dock = DockStyle.Fill; Construir(); _mediator.Registrar(this);
     }
 
@@ -41,13 +41,15 @@ public sealed class ConsultasControl : UserControl, IComponenteVista
     {
         try
         {
-            _pedidos.DataSource = (await _reportes.ListarPedidosAsync(ct)).ToList();
-            await ReemplazarPaginaAsync("Inventario", await _reportes.ListarMovimientosAsync(ct));
-            await ReemplazarPaginaAsync("Pagos", await _reportes.ListarPagosAsync(ct));
-            await ReemplazarPaginaAsync("Despachos", await _reportes.ListarDespachosAsync(ct));
-            await ReemplazarPaginaAsync("Devoluciones", await _reportes.ListarDevolucionesAsync(ct));
-            await ReemplazarPaginaAsync("Auditoría", await _reportes.ListarAuditoriaAsync(200, ct));
-            var m = _reportes.ObtenerMetricas();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var reportes = scope.ServiceProvider.GetRequiredService<ReporteServicio>();
+            _pedidos.DataSource = (await reportes.ListarPedidosAsync(ct)).ToList();
+            await ReemplazarPaginaAsync("Inventario", await reportes.ListarMovimientosAsync(ct));
+            await ReemplazarPaginaAsync("Pagos", await reportes.ListarPagosAsync(ct));
+            await ReemplazarPaginaAsync("Despachos", await reportes.ListarDespachosAsync(ct));
+            await ReemplazarPaginaAsync("Devoluciones", await reportes.ListarDevolucionesAsync(ct));
+            await ReemplazarPaginaAsync("Auditoría", await reportes.ListarAuditoriaAsync(200, ct));
+            var m = reportes.ObtenerMetricas();
             await ReemplazarPaginaAsync("Métricas", new[] { m });
             _estado.Text = "Datos actualizados";
         }
@@ -56,16 +58,24 @@ public sealed class ConsultasControl : UserControl, IComponenteVista
 
     private async Task FiltrarAsync()
     {
-        try { _pedidos.DataSource = (await _reportes.FiltrarPedidosAsync(_filtro.Text)).ToList(); _estado.Text = "Filtro aplicado"; }
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            _pedidos.DataSource = (await scope.ServiceProvider.GetRequiredService<ReporteServicio>()
+                .FiltrarPedidosAsync(_filtro.Text)).ToList();
+            _estado.Text = "Filtro aplicado";
+        }
         catch (Exception ex) { _estado.Text = ex.Message; }
     }
 
     private async Task ComprobanteAsync(bool esDevolucion)
     {
         if (_pedidos.CurrentRow?.Cells[nameof(Application.DTOs.PedidoResumenDto.Id)].Value is not int id) return;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var comprobantes = scope.ServiceProvider.GetRequiredService<ComprobanteServicio>();
         var resultado = esDevolucion
-            ? await _comprobantes.EmitirDevolucionAsync(id, "VISTA_PREVIA")
-            : await _comprobantes.EmitirVentaAsync(id, "VISTA_PREVIA");
+            ? await comprobantes.EmitirDevolucionAsync(id, "VISTA_PREVIA")
+            : await comprobantes.EmitirVentaAsync(id, "VISTA_PREVIA");
         MessageBox.Show(resultado.Contenido ?? resultado.Mensaje, resultado.Mensaje, MessageBoxButtons.OK,
             resultado.Exitoso ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
