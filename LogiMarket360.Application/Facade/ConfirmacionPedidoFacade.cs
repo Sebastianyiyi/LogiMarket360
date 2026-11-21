@@ -7,6 +7,7 @@ using LogiMarket360.Application.Patterns.ChainOfResponsibility;
 using LogiMarket360.Application.Patterns.Singleton;
 using LogiMarket360.Application.Ports;
 using LogiMarket360.Application.Ports.Repositories;
+using LogiMarket360.Application.Security;
 using LogiMarket360.Domain.Entities;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.Domain.Exceptions;
@@ -33,6 +34,7 @@ public class ConfirmacionPedidoFacade
     private readonly IUnitOfWork _unitOfWork;
     private readonly IOutboxProcesador _outboxProcesador;
     private readonly MetricasSesion _metricas;
+    private readonly IAutorizador _autorizador;
 
     // Chain of Responsibility para validación previa
     private readonly IValidationStep _cadenaValidacion;
@@ -48,7 +50,8 @@ public class ConfirmacionPedidoFacade
         IAuditoriaRepository auditoriaRepository,
         IUnitOfWork unitOfWork,
         IOutboxProcesador outboxProcesador,
-        MetricasSesion metricas)
+        MetricasSesion metricas,
+        IAutorizador autorizador)
     {
         _pedidoRepository = pedidoRepository;
         _productoRepository = productoRepository;
@@ -61,6 +64,7 @@ public class ConfirmacionPedidoFacade
         _unitOfWork = unitOfWork;
         _outboxProcesador = outboxProcesador;
         _metricas = metricas;
+        _autorizador = autorizador;
 
         // Construir la cadena de validación
         var paso1 = new ClienteActivoValidationStep(clienteRepository);
@@ -77,6 +81,16 @@ public class ConfirmacionPedidoFacade
         string idempotencyKey,
         CancellationToken ct = default)
     {
+        try
+        {
+            _autorizador.ExigirRol(Permisos.Cobro);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            await _unitOfWork.RollbackAsync(ct);
+            return new ResultadoConfirmacion(false, ex.Message);
+        }
+
         // 1. Idempotencia: si ya existe pago aprobado con la misma clave, retornar resultado original
         var pagoExistente = await _pagoRepository.ObtenerPorClaveIdempotenciaAsync(idempotencyKey, ct);
         if (pagoExistente is not null && pagoExistente.Aprobado)
@@ -108,6 +122,7 @@ public class ConfirmacionPedidoFacade
         var pedido = await _pedidoRepository.ObtenerPorIdAsync(pedidoId, ct);
         if (pedido == null)
         {
+            await _unitOfWork.RollbackAsync(ct);
             return new ResultadoConfirmacion(false, $"Pedido con ID '{pedidoId}' no encontrado.");
         }
 
@@ -115,16 +130,11 @@ public class ConfirmacionPedidoFacade
         var validacion = await _cadenaValidacion.ValidateAsync(pedido, ct);
         if (!validacion.EsValido)
         {
+            await _unitOfWork.RollbackAsync(ct);
             return new ResultadoConfirmacion(false, $"[{validacion.PasoFallido}] {validacion.MensajeError}");
         }
 
-        // 4. Validar estado → Validado (si aún está en BORRADOR)
-        if (pedido.EstadoCodigo == EstadoPedido.BORRADOR)
-        {
-            pedido.Validar();
-        }
-
-        // 5. Ejecutar cobro simulado (Proxy → Decorator → Adapter)
+        // 4. Ejecutar cobro simulado sin mutar aún el agregado (Proxy → Decorator → proveedor)
         ResultadoPago resultadoPago;
         try
         {
@@ -132,27 +142,45 @@ public class ConfirmacionPedidoFacade
         }
         catch (UnauthorizedAccessException uex)
         {
+            await _unitOfWork.RollbackAsync(ct);
             return new ResultadoConfirmacion(false, $"Acceso denegado: {uex.Message}");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await _unitOfWork.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _metricas.RegistrarCobroFallido();
+            await _unitOfWork.RollbackAsync(ct);
+            return new ResultadoConfirmacion(false, $"Error al procesar el cobro: {ex.Message}");
         }
 
         if (!resultadoPago.Exitoso)
         {
             _metricas.RegistrarCobroFallido();
+            await _unitOfWork.RollbackAsync(ct);
             return new ResultadoConfirmacion(false, $"Cobro rechazado: {resultadoPago.Mensaje}");
         }
 
-        // 6. Iniciar transacción atómica: stock + pedido + pago + Outbox
-        await _unitOfWork.BeginTransactionAsync(ct);
+        // 5. Transacción atómica: estado + stock + pago + Outbox
         try
         {
-            // 6a. Descontar stock por SKU físico
+            await _unitOfWork.BeginTransactionAsync(ct);
+
+            // 5a. Validar el pedido dentro de la misma transacción que el pago persistido
+            if (pedido.EstadoCodigo == EstadoPedido.BORRADOR)
+                pedido.Validar();
+
+            // 5b. Descontar stock por SKU físico
             await DescontarStockAsync(pedido, ct);
 
-            // 6b. Cambiar estado del pedido a PAGADO
+            // 5c. Cambiar estado del pedido a PAGADO
             pedido.Pagar();
             _pedidoRepository.Actualizar(pedido);
 
-            // 6c. Registrar el pago
+            // 5d. Registrar el pago
             var pago = new Pago(
                 pedidoId: pedido.Id,
                 monto: pedido.Total,
@@ -165,7 +193,7 @@ public class ConfirmacionPedidoFacade
             await _pagoRepository.AgregarAsync(pago, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
-            // 6d. Crear evento Outbox en la misma transacción
+            // 5e. Crear evento Outbox en la misma transacción
             var eventoPayload = JsonSerializer.Serialize(new
             {
                 pedidoId = pedido.Id,
@@ -178,7 +206,7 @@ public class ConfirmacionPedidoFacade
             var outbox = new EventoOutbox("PedidoPagado", eventoPayload);
             await _outboxRepository.AgregarAsync(outbox, ct);
 
-            // 6e. Auditoría en la misma transacción
+            // 5f. Auditoría en la misma transacción
             var audit = new Auditoria(
                 usuario: "SISTEMA",
                 operacion: "CONFIRMACION_PEDIDO",
@@ -190,16 +218,6 @@ public class ConfirmacionPedidoFacade
             await _auditoriaRepository.AgregarAsync(audit, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             await _unitOfWork.CommitAsync(ct);
-
-            // 7. Post-transacción: procesar Outbox (Observer + notificaciones)
-            await _outboxProcesador.ProcesarPendientesAsync(50, ct);
-
-            return new ResultadoConfirmacion(
-                Exitoso: true,
-                Mensaje: $"Pedido {pedido.NumeroPedido} confirmado y cobrado exitosamente.",
-                ReferenciaPago: resultadoPago.ReferenciaTransaccion,
-                TotalCobrado: pedido.Total
-            );
         }
         catch (ConflictoConcurrenciaException ex)
         {
@@ -211,6 +229,22 @@ public class ConfirmacionPedidoFacade
             await _unitOfWork.RollbackAsync(ct);
             return new ResultadoConfirmacion(false, $"Error al confirmar: {ex.Message}");
         }
+
+        string mensaje = $"Pedido {pedido.NumeroPedido} confirmado y cobrado exitosamente.";
+        try
+        {
+            await _outboxProcesador.ProcesarPendientesAsync(50, ct);
+        }
+        catch (Exception ex)
+        {
+            mensaje += $" El evento quedó pendiente para reintento: {ex.Message}";
+        }
+
+        return new ResultadoConfirmacion(
+            Exitoso: true,
+            Mensaje: mensaje,
+            ReferenciaPago: resultadoPago.ReferenciaTransaccion,
+            TotalCobrado: pedido.Total);
     }
 
     private async Task DescontarStockAsync(Pedido pedido, CancellationToken ct)

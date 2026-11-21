@@ -3,7 +3,9 @@ using LogiMarket360.Application.Facade;
 using LogiMarket360.Application.Patterns.Command;
 using LogiMarket360.Application.Patterns.TemplateMethod;
 using LogiMarket360.Application.Ports;
+using LogiMarket360.Application.Ports.Repositories;
 using LogiMarket360.Application.Services;
+using LogiMarket360.Domain.Entities;
 using LogiMarket360.Domain.Enums;
 using LogiMarket360.Infrastructure.Data;
 using LogiMarket360.Tests.Support;
@@ -15,6 +17,92 @@ namespace LogiMarket360.Tests;
 
 public sealed class IntegrityRecoveryTests
 {
+    [Fact(DisplayName = "P06 - cobro rechazado conserva estado e inventario en contexto nuevo")]
+    public async Task CobroRechazado_ContextoNuevo_ConservaBorradorSinEfectos()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"lm360-p06-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using var app = await TestApplication.CreateAsync(
+                path,
+                false,
+                services => services.AddScoped<IPasarelaPago, LogiMarket360.Infrastructure.Adapters.PasarelaFallaSimulada>());
+            await app.LoginAsync("ventas", "ventas123");
+            var pedido = await CrearAsync(app, 1, new LineaPedidoSolicitud("P01", 1, false));
+
+            var resultado = await app.Get<ConfirmacionPedidoFacade>()
+                .ConfirmarAsync(pedido.Id, pedido.IdempotencyKey);
+
+            Assert.False(resultado.Exitoso);
+            Assert.Empty(app.Get<LogiMarketDbContext>().ChangeTracker.Entries());
+            await using var db = CrearContexto(path);
+            Assert.Equal(EstadoPedido.BORRADOR, (await db.Pedidos.SingleAsync()).EstadoCodigo);
+            Assert.Equal(8, (await db.Productos.SingleAsync(p => p.Sku == "P01")).Stock);
+            Assert.Empty(await db.Pagos.ToListAsync());
+            Assert.Empty(await db.EventosOutbox.ToListAsync());
+            Assert.Empty(await db.MovimientosInventario.ToListAsync());
+        }
+        finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact(DisplayName = "P22 - autorización ocurre antes de cualquier colaborador de cobro")]
+    public async Task ConsultaIntentandoConfirmar_NoMutaNiInvocaPasarela()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"lm360-p22-{Guid.NewGuid():N}.db");
+        var pasarela = new PasarelaContadora();
+        try
+        {
+            await using var app = await TestApplication.CreateAsync(
+                path,
+                false,
+                services => services.AddScoped<IPasarelaPago>(_ => pasarela));
+            await app.LoginAsync("ventas", "ventas123");
+            var pedido = await CrearAsync(app, 1, new LineaPedidoSolicitud("P01", 1, false));
+            app.Get<AutenticacionServicio>().CerrarSesion();
+            await app.LoginAsync("consulta", "consulta123");
+
+            var resultado = await app.Get<ConfirmacionPedidoFacade>()
+                .ConfirmarAsync(pedido.Id, pedido.IdempotencyKey);
+
+            Assert.False(resultado.Exitoso);
+            Assert.Equal(0, pasarela.Invocaciones);
+            await using var db = CrearContexto(path);
+            Assert.Equal(EstadoPedido.BORRADOR, (await db.Pedidos.SingleAsync()).EstadoCodigo);
+            Assert.Equal(8, (await db.Productos.SingleAsync(p => p.Sku == "P01")).Stock);
+            Assert.Empty(await db.Pagos.ToListAsync());
+            Assert.Empty(await db.EventosOutbox.ToListAsync());
+        }
+        finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact(DisplayName = "P20 - excepción intermedia revierte todos los cambios y limpia tracking")]
+    public async Task ExcepcionIntermedia_RollbackSinPersistenciaParcial()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"lm360-p20-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using var app = await TestApplication.CreateAsync(
+                path,
+                false,
+                services => services.AddScoped<IEventoOutboxRepository, OutboxConFallo>());
+            await app.LoginAsync("ventas", "ventas123");
+            var pedido = await CrearAsync(app, 1, new LineaPedidoSolicitud("P01", 1, false));
+
+            var resultado = await app.Get<ConfirmacionPedidoFacade>()
+                .ConfirmarAsync(pedido.Id, pedido.IdempotencyKey);
+
+            Assert.False(resultado.Exitoso);
+            Assert.Empty(app.Get<LogiMarketDbContext>().ChangeTracker.Entries());
+            await using var db = CrearContexto(path);
+            Assert.Equal(EstadoPedido.BORRADOR, (await db.Pedidos.SingleAsync()).EstadoCodigo);
+            Assert.Equal(8, (await db.Productos.SingleAsync(p => p.Sku == "P01")).Stock);
+            Assert.Empty(await db.Pagos.ToListAsync());
+            Assert.Empty(await db.EventosOutbox.ToListAsync());
+            Assert.Empty(await db.MovimientosInventario.ToListAsync());
+        }
+        finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
+    }
+
     [Fact(DisplayName = "P20 - Facade revierte ante cobro rechazado")]
     public async Task P20_CobroRechazado_NoPersisteStockPagoNiOutbox()
     {
@@ -144,6 +232,40 @@ public sealed class IntegrityRecoveryTests
         var r = await servicio.CrearBorradorAsync(clienteId, TipoEntrega.ESTANDAR, lineas);
         Assert.True(r.Exitoso, r.Mensaje);
         return (await servicio.ObtenerAsync(r.EntidadId!.Value))!;
+    }
+
+    private static LogiMarketDbContext CrearContexto(string path)
+    {
+        var options = new DbContextOptionsBuilder<LogiMarketDbContext>()
+            .UseSqlite($"Data Source={path}")
+            .Options;
+        return new LogiMarketDbContext(options);
+    }
+
+    private sealed class PasarelaContadora : IPasarelaPago
+    {
+        public int Invocaciones { get; private set; }
+        public string NombreProveedor => "CONTADORA";
+
+        public Task<ResultadoPago> CobrarAsync(decimal monto, string claveIdempotencia, CancellationToken ct = default)
+        {
+            Invocaciones++;
+            return Task.FromResult(new ResultadoPago(true, "CONTADA", "Aprobado", monto, NombreProveedor));
+        }
+    }
+
+    private sealed class OutboxConFallo : IEventoOutboxRepository
+    {
+        public Task AgregarAsync(EventoOutbox evento, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Fallo inducido después de modificar pedido, stock y pago.");
+
+        public Task<IReadOnlyList<EventoOutbox>> ListarPendientesAsync(int limite = 50, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<EventoOutbox>>(Array.Empty<EventoOutbox>());
+
+        public Task<IReadOnlyList<EventoOutbox>> ListarTodosAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<EventoOutbox>>(Array.Empty<EventoOutbox>());
+
+        public void Actualizar(EventoOutbox evento) { }
     }
 
     private sealed class FailingFactory : INotificadorFactory

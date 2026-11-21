@@ -42,11 +42,17 @@ public class EfUnitOfWork : IUnitOfWork
 
     public async Task RollbackAsync(CancellationToken ct = default)
     {
-        if (_transaction != null)
+        try
         {
-            await _transaction.RollbackAsync(ct);
-            await _transaction.DisposeAsync();
+            if (_transaction != null)
+                await _transaction.RollbackAsync(ct);
+        }
+        finally
+        {
+            if (_transaction != null)
+                await _transaction.DisposeAsync();
             _transaction = null;
+            _context.ChangeTracker.Clear();
         }
     }
 
